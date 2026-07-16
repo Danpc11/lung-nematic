@@ -41,8 +41,8 @@ def make_tissue_mask(
         (saturation > saturation_threshold)
         | (eosin > eosin_threshold)
     )
-    mask = morphology.binary_closing(mask, morphology.disk(3))
-    mask = morphology.remove_small_objects(mask, min_size=150)
-    mask = morphology.remove_small_holes(mask, area_threshold=250)
+    mask = morphology.closing(mask, morphology.disk(3))
+    mask = morphology.remove_small_objects(mask, max_size=150)
+    mask = morphology.remove_small_holes(mask, max_size=250)
 
     return mask.astype(bool), hed
