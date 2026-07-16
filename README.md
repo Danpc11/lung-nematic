@@ -1,5 +1,11 @@
 # Lung Nematic
 
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![NumPy](https://img.shields.io/badge/NumPy-supported-blue)
+![SciPy](https://img.shields.io/badge/SciPy-supported-blue)
+![Streamlit](https://img.shields.io/badge/Streamlit-app-FF4B4B?logo=streamlit&logoColor=white)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/nephroq/blob/main/risk_notebook.ipynb)
+
 Pipeline modular para estimar campos nemáticos y detectar defectos topológicos candidatos en imágenes de histología pulmonar.
 
 ## Qué genera
