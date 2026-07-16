@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lung-nematic"
+version = "0.1.0"
+description = "Nematic field and topological defect analysis for lung histology"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scipy>=1.10",
+    "scikit-image>=0.22",
+    "scikit-learn>=1.3",
+    "matplotlib>=3.7",
+    "pillow>=10.0",
+    "tqdm>=4.66",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lung_nematic*"]

@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+env/
+.env/
+conda-env/
+
+# Tests and tools
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Results and data
+data/
+images/
+results/
+output/
+outputs/
+*.log
+
+# Large microscopy files
+*.svs
+*.ndpi
+*.mrxs
+*.scn
+*.czi
+*.lif
+*.ome.tif
+*.ome.tiff
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
