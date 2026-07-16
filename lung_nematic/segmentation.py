@@ -49,15 +49,15 @@ def segment_nuclei(
     nuclear_mask = (hematoxylin > threshold) & tissue_mask
     nuclear_mask = morphology.remove_small_objects(
         nuclear_mask,
-        min_size=max(5, int(config.min_nucleus_area_px * 0.5)),
+        max_size=max(5, int(config.min_nucleus_area_px * 0.5)),
     )
-    nuclear_mask = morphology.binary_opening(
+    nuclear_mask = morphology.opening(
         nuclear_mask,
         morphology.disk(1),
     )
     nuclear_mask = morphology.remove_small_holes(
         nuclear_mask,
-        area_threshold=20,
+        max_size=20,
     )
 
     distance = distance_transform_edt(nuclear_mask)
