@@ -44,29 +44,43 @@ def compute_fused_field(
     collagen_field: dict[str, np.ndarray],
     eps: float = 1e-9,
 ) -> dict[str, np.ndarray]:
-    """Combine a nuclear and a collagen field into one director field."""
-    c_nuclear = _normalise(nuclear_field["density"])
-    c_collagen = collagen_field["order"] * _normalise(collagen_field["density"])
+    """Combine a nuclear and a collagen field into one director field.
+
+    The fused nematic tensor is a presence-weighted average of the two source
+    tensors:
+
+        Q_fused = (w_n Q_n + w_c Q_c) / (w_n + w_c),
+
+    where each source tensor already carries its own order,
+    ``Q_i = order_i (cos 2t_i, sin 2t_i)``, and the weights are *presence* only:
+    ``w_n`` = normalised nuclear density, ``w_c`` = normalised eosin density.
+    Coherence therefore enters exactly once (through ``order_c`` inside
+    ``Q_c``); the weights measure how much of each material is present, not how
+    aligned it is. The fused angle is the argument of ``Q_fused`` and the fused
+    order its magnitude.
+    """
+    w_nuclear = _normalise(nuclear_field["density"])
+    w_collagen = _normalise(collagen_field["density"])
 
     qxx = (
-        c_nuclear * nuclear_field["order"] * np.cos(2 * nuclear_field["theta"])
-        + c_collagen
+        w_nuclear * nuclear_field["order"] * np.cos(2 * nuclear_field["theta"])
+        + w_collagen
         * collagen_field["order"]
         * np.cos(2 * collagen_field["theta"])
     )
     qxy = (
-        c_nuclear * nuclear_field["order"] * np.sin(2 * nuclear_field["theta"])
-        + c_collagen
+        w_nuclear * nuclear_field["order"] * np.sin(2 * nuclear_field["theta"])
+        + w_collagen
         * collagen_field["order"]
         * np.sin(2 * collagen_field["theta"])
     )
 
-    total_confidence = c_nuclear + c_collagen
+    total_weight = w_nuclear + w_collagen
     theta = (0.5 * np.arctan2(qxy, qxx)) % np.pi
-    order = np.clip(np.sqrt(qxx**2 + qxy**2) / (total_confidence + eps), 0, 1)
+    order = np.clip(np.sqrt(qxx**2 + qxy**2) / (total_weight + eps), 0, 1)
 
     return {
-        "density": total_confidence,
+        "density": total_weight,
         "order": order,
         "theta": theta,
     }
@@ -87,7 +101,13 @@ def detect_multiscale_fused_defects(
         nuclear_field = compute_nematic_field(
             oriented_nuclei, tissue_mask.shape, sigma
         )
-        collagen_field = compute_collagen_field(eosin, sigma, inner_scale_px)
+        collagen_field = compute_collagen_field(
+            eosin,
+            sigma,
+            inner_scale_px,
+            tissue_mask=tissue_mask,
+            mask_normalized=config.mask_normalized_smoothing,
+        )
         fused = compute_fused_field(nuclear_field, collagen_field)
         fields[float(sigma)] = fused
 
