@@ -19,6 +19,12 @@ dependencies = [
     "tqdm>=4.66",
 ]
 
+[project.scripts]
+lung-nematic = "lung_nematic.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["lung_nematic*"]
+
+[tool.setuptools.package-data]
+lung_nematic = ["data/*.json"]
