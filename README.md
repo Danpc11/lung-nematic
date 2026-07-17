@@ -3,35 +3,45 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/lung_nematic_colab.ipynb)
 
-Nematic director fields and candidate topological defects (`+1/2`, `-1/2`) in
-lung histology (H&E), with three orientation sources and statistical controls.
-It targets fibrotic lung, where the mechanically relevant architecture lives in
-the collagen rather than the nuclei.
+Nematic director fields and candidate topological defects in lung histology
+(H&E), with three orientation sources and statistical controls. It targets
+fibrotic lung, where the mechanically relevant architecture lives in the
+collagen rather than the nuclei.
 
 ---
 ## What it does
 
 For each image the pipeline builds a coarse-grained director field, finds
-`±1/2` winding singularities that persist across smoothing scales, and (option-
-ally) tests them against a permutation null and a colocalization control.
+half-integer (`+1/2`, `-1/2`) winding singularities that persist across
+smoothing scales, and — optionally — an integer (`+1`, `-1`) layer, a
+permutation null, a colocalization control, and a per-defect director map.
 
 Three orientation sources:
 
 - **nuclear** — from segmented nuclear long axes (cellular regions).
 - **collagen** — from the structure tensor of the eosin channel (fiber
   architecture; dense, works where nuclei are sparse).
-- **fused** — a confidence-weighted combination of the two, following nuclei
+- **fused** — a presence-weighted combination of the two, following nuclei
   where cells are dense and collagen where fibers are.
 
-Two statistical controls:
+Optional analyses (all off by default, all reproducible from the config):
 
+- **integer defect layer** — `±1` defects (aster / vortex / saddle) detected by
+  winding on an N-point ring, because a 4-corner plaquette cannot resolve a full
+  `2*pi` director rotation. Off by default.
 - **permutation null model** — shuffles orientations while holding positions,
   density, mask and detection fixed, so the observed defect count can be
   compared against chance. The nuclear null permutes per-nucleus angles; the
   collagen null permutes per-pixel eosin gradients.
-- **colocalization test** — asks whether local order at defect locations
-  differs from random tissue (a bootstrap control; local order drops at a
-  genuine defect core).
+- **colocalization test** — a bootstrap control comparing local order at
+  defects against random eligible tissue, reporting both the defect **core**
+  (expected low — a singularity) and a surrounding **annulus** (expected higher
+  if the defect is embedded in an organised region). Controls are drawn from
+  the same four-vertex gate the detector uses.
+- **defect maps** — a crop per defect with the local director drawn as
+  streamlines over the H&E, coloured by local order `S`. For `+1` defects the
+  spiral angle `theta0` is estimated (aster `~0`, vortex `~±90 deg`). Integer
+  defects are mapped from the collagen field only.
 
 ---
 ## Install
@@ -47,105 +57,185 @@ git clone https://github.com/Danpc11/lung-nematic.git
 cd lung-nematic
 pip install -e .
 ```
+
+Installing also registers a `lung-nematic` console command and ships a default
+configuration inside the package, so a fresh install runs without pointing at a
+config file.
+
 ---
 ## Usage
 
 ### Command line (batch)
 
 ```bash
-python -m lung_nematic \
-    --input path/to/images \
-    --output path/to/results \
-    --config config/default_config.json
+lung-nematic --input path/to/images --output path/to/results
 ```
 
-Point `--input` at a folder of images (`.jpg`, `.png`, `.tif`, ...). Results are
-written per image under `--output`, plus a `summary_metrics.csv`. An optional
-`--metadata` CSV (see `metadata_template.csv`) supplies `microns_per_pixel` and
-grouping so defect densities come out in mm^-2.
+`--input` is a folder of images (`.jpg`, `.png`, `.tif`, ...). Results are
+written per image under `--output`, plus a `summary_metrics.csv` and a per-group
+aggregate. `--config` is optional (the packaged default is used otherwise). An
+optional `--metadata` CSV (see `metadata_template.csv`) supplies
+`microns_per_pixel` and grouping, and matches rows by `filename` or
+`relative_path`; a missing metadata path is an error rather than silently
+ignored, and duplicate `image_id`s are rejected before processing.
+
+Selected flags (each overrides the config when given):
+
+| Flag | Meaning |
+| --- | --- |
+| `--field {nuclear,collagen,fused}` | Orientation source |
+| `--run-null` / `--no-run-null` | Permutation null model |
+| `--run-colocalization` | Colocalization (core + annulus) |
+| `--detect-integer-defects` | Add the `±1` ring layer |
+| `--integer-loop-radius`, `--integer-loop-points` | Ring geometry for `±1` |
+| `--save-defect-maps`, `--defect-map-window` | Per-defect director maps |
+| `--mask-normalized-smoothing` | Confine smoothing to tissue (collagen) |
+| `--n-permutations`, `--null-mode`, `--null-downsample` | Null model settings |
+| `--n-bootstrap` | Colocalization bootstrap size |
+| `--collagen-inner-scale` | Gradient scale of the structure tensor |
+| `--seed` | Seed for all stochastic controls |
+| `--config`, `--metadata`, `--stop-on-error` | Config, metadata, error policy |
+
+The full CLI is the same engine as Colab and the Python API; the three cannot
+disagree.
 
 ### Colab (no local setup)
 
-Open `lung_nematic_colab.ipynb` in Google Colab. The code is hidden;
-you upload images (or load them from Drive), pick the field and the analyses
-with form controls, run, and download the results.
+Open `lung_nematic_colab.ipynb` in Google Colab. The code is hidden; you upload
+images (or load them from Drive), pick the field and the analyses with form
+controls, run, and download the results. The notebook is a thin front-end over
+`analyze_folder`, so it produces the same outputs a command-line run would.
 
 ### Python
 
 ```python
-from lung_nematic.config import load_config
-from lung_nematic.io_utils import read_rgb
+from lung_nematic.config import load_default_config
+from lung_nematic.pipeline import analyze_image
+
+config = load_default_config()          # packaged default; or load_config("my_config.json")
+
+summary = analyze_image(
+    "image.jpg",
+    metadata={"image_id": "image", "group": "case", "microns_per_pixel": None},
+    output_root="results",
+    config=config,
+    field_type="collagen",              # "nuclear" | "collagen" | "fused"
+    run_null=True,
+    run_colocalization=True,
+)
+```
+
+`analyze_image` is the single engine the CLI and notebook both call. Lower-level
+building blocks remain importable if you want to assemble a custom flow:
+
+```python
 from lung_nematic.preprocessing import make_tissue_mask
 from lung_nematic.collagen_field import detect_multiscale_collagen_defects
 from lung_nematic.null_model import run_collagen_null_model
 from lung_nematic.colocalization import run_colocalization
 
-config = load_config("config/default_config.json")
-rgb = read_rgb("image.jpg")
-mask, hed = make_tissue_mask(rgb)          # eosin channel is hed[:, :, 1]
-
-# collagen defects
+rgb = ...                                       # read_rgb("image.jpg")
+mask, hed = make_tissue_mask(rgb)               # eosin channel is hed[:, :, 1]
 defects, fields, _ = detect_multiscale_collagen_defects(hed[:, :, 1], mask, config)
-
-# is the defect count above chance?
 null = run_collagen_null_model(hed[:, :, 1], mask, config, n_permutations=199)
-
-# do defects sit in structured regions?
 rep = float(config.sigmas_px[len(config.sigmas_px) // 2])
-coloc = run_colocalization(defects, fields[rep], mask, config)
+coloc = run_colocalization(defects, fields[rep], mask, config, representative_sigma_px=rep)
 ```
+
 ---
 ## Method
 
 Each nucleus (or eosin pixel) contributes a headless orientation. These are
 accumulated into a nematic tensor `Q = S (cos 2t, sin 2t)`, smoothed at several
-scales `sigmas_px`, and reduced to a director angle `theta` and a local order
-`S`. Candidate defects are grid plaquettes whose director winds by `±pi`
-(`±1/2` charge); a candidate is kept only if it persists across at least
+scales `sigmas_px`, and reduced to a director angle `theta` and local order `S`.
+
+**Half-integer defects.** Candidates are grid plaquettes whose director winds by
+`±pi` (`±1/2` charge); a candidate is kept only if it persists across at least
 `min_scales_for_persistence` scales and lies inside dense tissue away from the
-edge. The collagen field uses the structure tensor of the eosin channel; the
-fiber direction is the dominant gradient rotated by 90 degrees, and coherence
-plays the role of local order.
+edge.
+
+**Integer defects (opt-in).** A `±1` defect makes the director wind by `2*pi`,
+i.e. the doubled phase `2*theta` winds by `4*pi`. On a 4-corner plaquette each
+edge would carry `~pi` of that winding, right at the `±pi` branch cut where the
+sign is ambiguous. The integer layer instead samples the director on a ring of
+`integer_defect_loop_points` points (`>= 6`) so each step stays well below `pi`.
+It measures the *total enclosed* winding, so a `+1` can be a genuine
+aster/vortex or two unresolved `+1/2` cores inside the ring — read it alongside
+the `±1/2` layer.
+
+**Collagen field.** The structure tensor of the eosin channel; the fiber
+direction is the dominant gradient rotated by 90 degrees, and coherence plays
+the role of local order. With `mask_normalized_smoothing` the tensor is
+integrated with mask-normalized convolution (`gauss(field*mask)/gauss(mask)`) so
+orientation is not mixed across an alveolar lumen.
+
+**Fused field.** A presence-weighted average of the two source tensors,
+`Q_fused = (w_n Q_n + w_c Q_c) / (w_n + w_c)`, with weights `w_n`, `w_c` equal to
+normalised nuclear and eosin density. Coherence enters once, through the order
+already inside each `Q`.
+
+**Colocalization.** For each defect, order is sampled at the core (expected low)
+and averaged over an annulus of radius `[inner, outer] * sigma` (expected higher
+if the defect sits in an organised region). Both are compared against a
+bootstrap over random eligible plaquette centres — the same four-vertex gate the
+detector applies — so controls and defects share the same geometry.
+
+**Spiral angle.** For a `+1` defect, `theta(phi) = phi + theta0`, so `theta0` is
+the circular mean of `theta - phi` over an annulus (period `pi`, wrapped to
+`(-pi/2, pi/2]`): `~0` aster, `~±pi/2` vortex, in between a spiral. This is a
+pure director quantity.
 
 ---
 ## Package layout
 
 ```text
 lung_nematic/
-├── config.py            AnalysisConfig dataclass, JSON load/save
+├── config.py            AnalysisConfig dataclass, JSON load/save, packaged default
+├── data/                default_config.json shipped with the package
 ├── io_utils.py          image discovery, metadata, RGB reading
 ├── preprocessing.py     tissue mask + HED stain separation
 ├── segmentation.py      nuclear segmentation and orientation
 ├── nematic.py           nuclear nematic tensor field
 ├── collagen_field.py    structure-tensor collagen field
-├── fused_field.py       confidence-weighted nuclear + collagen field
-├── defects.py           winding detection + multi-scale persistence
+├── fused_field.py       presence-weighted nuclear + collagen field
+├── defects.py           winding detection (±1/2 and ±1) + multi-scale persistence
 ├── null_model.py        permutation null (nuclear and collagen)
-├── colocalization.py    defect vs local-order bootstrap test
+├── colocalization.py    defect core/annulus vs local-order bootstrap test
+├── defect_maps.py       per-defect director maps + spiral angle
 ├── metrics.py           per-image summary metrics
 ├── visualization.py     overlays and diagnostic panels
-├── pipeline.py          single-image pipeline
+├── pipeline.py          single-image engine (analyze_image)
 └── batch.py             folder-level batch driver
 ```
 
 ---
 ## Outputs
 
-Per image: a tissue mask, nuclear segmentation, a director-field overlay with
-marked candidate defects, per-nucleus and per-defect CSVs, a metrics summary
-(JSON + CSV), and, when enabled, null-model and colocalization histograms. The
-batch driver also writes a combined `summary_metrics.csv` and a per-group
-aggregate.
+Per image (filenames tagged by field, so nuclear/collagen/fused runs do not
+overwrite each other): a director-field overlay with marked candidate defects,
+per-nucleus and per-defect CSVs, raw detections, and a strict-JSON metrics
+summary (`allow_nan=False`) plus a CSV row. When enabled: a null-model histogram
+and totals, colocalization bootstrap tables, an optional diagnostic panel, and a
+`defect_maps/` folder of per-defect director maps. The batch driver also writes
+a combined `summary_metrics.csv` and a per-group aggregate.
 
 ---
 ## Limitations
 
-- Candidate defects only; not clinically validated.
+- Candidate defects only; **not clinically validated**.
 - The eosin channel also stains cytoplasm and red cells, not only collagen, so
   the density gate matters for the collagen field.
 - The raw defect count can be a low-power statistic; interpret it together with
   the null model and colocalization, not on its own.
+- Integer (`±1`) defects are rare and unstable in a director field (a `+1` tends
+  to split into two `+1/2`); the ring layer reports total enclosed winding.
+- Defect maps show the **director** coloured by order `S`, not velocity or flow;
+  fixed H&E has no time-resolved motion.
+- Detection is defined in **pixels**; `microns_per_pixel` is applied only to
+  final densities. Two resolutions of the same tissue can give different counts,
+  so cohort comparisons need a common target resolution (not yet automated).
 - Without `microns_per_pixel`, defect densities in mm^-2 are unavailable.
+
 ---
 ## License
 
