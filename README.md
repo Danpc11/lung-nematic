@@ -1,6 +1,6 @@
 # Lung Nematic
 
-[Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/lung_nematic_colab.ipynb)
 
 Nematic director fields and candidate topological defects (`+1/2`, `-1/2`) in
