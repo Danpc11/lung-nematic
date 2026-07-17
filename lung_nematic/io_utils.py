@@ -36,13 +36,19 @@ def load_metadata(metadata_csv: str | Path | None) -> pd.DataFrame:
 
     path = Path(metadata_csv)
     if not path.exists():
-        return pd.DataFrame()
+        raise FileNotFoundError(f"Metadata file does not exist: {path}")
 
     metadata = pd.read_csv(path)
-    if "filename" not in metadata.columns:
-        raise ValueError("metadata.csv must include a 'filename' column.")
-
-    metadata["filename"] = metadata["filename"].astype(str)
+    has_filename = "filename" in metadata.columns
+    has_relpath = "relative_path" in metadata.columns
+    if not (has_filename or has_relpath):
+        raise ValueError(
+            "metadata.csv must include a 'filename' or 'relative_path' column."
+        )
+    if has_filename:
+        metadata["filename"] = metadata["filename"].astype(str)
+    if has_relpath:
+        metadata["relative_path"] = metadata["relative_path"].astype(str)
     return metadata
 
 
@@ -50,20 +56,32 @@ def resolve_metadata(
     image_path: str | Path,
     metadata: pd.DataFrame,
     default_microns_per_pixel: float | None = None,
+    root: str | Path | None = None,
 ) -> dict:
     path = Path(image_path)
+    relative = None
+    if root is not None:
+        try:
+            relative = path.relative_to(Path(root)).as_posix()
+        except ValueError:
+            relative = None
+
     resolved = {
         "filename": path.name,
         "image_id": path.stem,
         "group": path.parent.name,
+        "relative_path": relative,
         "microns_per_pixel": default_microns_per_pixel,
     }
 
     if not metadata.empty:
-        matches = metadata.loc[metadata["filename"] == path.name]
+        if "relative_path" in metadata.columns and relative is not None:
+            matches = metadata.loc[metadata["relative_path"] == relative]
+        else:
+            matches = metadata.loc[metadata["filename"] == path.name]
         if len(matches) > 1:
             raise ValueError(
-                f"Multiple metadata rows match filename: {path.name}"
+                f"Multiple metadata rows match image: {relative or path.name}"
             )
         if len(matches) == 1:
             row = matches.iloc[0]
