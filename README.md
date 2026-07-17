@@ -8,9 +8,6 @@ lung histology (H&E), with three orientation sources and statistical controls.
 It targets fibrotic lung, where the mechanically relevant architecture lives in
 the collagen rather than the nuclei.
 
-> **Status:** research tool (TRL ~4). Outputs are exploratory and **not
-> clinically validated**. Defects are reported as *candidates*.
-
 ## What it does
 
 For each image the pipeline builds a coarse-grained director field, finds
