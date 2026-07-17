@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import replace
 
 import json
 import subprocess
@@ -171,3 +172,83 @@ def test_cli_nuclear_and_strict_json(tmp_path):
     text = summaries[0].read_text()
     assert "NaN" not in text and "Infinity" not in text
     json.loads(text)  # standard JSON parses
+
+
+def _integer_field(shape, sign):
+    """Analytic +/-1 defect: aster (theta=phi) or saddle (theta=-phi)."""
+    height, width = shape
+    yy, xx = np.mgrid[0:height, 0:width]
+    phi = np.arctan2(yy - (height / 2 + 5), xx - (width / 2 + 5))
+    theta = (sign * phi) % np.pi
+    rng = np.random.default_rng(0)
+    density = 1.0 + 0.01 * rng.random(shape)
+    return {"density": density, "order": np.ones(shape), "theta": theta}
+
+
+def _integer_config():
+    return replace(
+        _detect_config(),
+        detect_integer_defects=True,
+        integer_defect_loop_radius_px=20,
+        integer_defect_loop_points=8,
+    )
+
+
+def test_plus_one_defect():
+    from lung_nematic.defects import detect_integer_defects_single_scale
+
+    field = _integer_field((200, 200), sign=+1)
+    detected = detect_integer_defects_single_scale(
+        field, _mask((200, 200)), _integer_config()
+    )
+    assert (detected["charge"] == 1.0).any()
+
+
+def test_minus_one_defect():
+    from lung_nematic.defects import detect_integer_defects_single_scale
+
+    field = _integer_field((200, 200), sign=-1)
+    detected = detect_integer_defects_single_scale(
+        field, _mask((200, 200)), _integer_config()
+    )
+    assert (detected["charge"] == -1.0).any()
+
+
+def test_integer_layer_is_opt_in():
+    # With the aster field but the default config (layer off), the half-integer
+    # detector must not emit +/-1 charges.
+    from lung_nematic.defects import single_scale_detections
+
+    field = _integer_field((200, 200), sign=+1)
+    off = single_scale_detections(field, _mask((200, 200)), _detect_config())
+    if not off.empty:
+        assert (off["charge"].abs() == 1.0).sum() == 0
+
+
+def test_spiral_angle_aster_and_vortex():
+    from lung_nematic.defect_maps import estimate_spiral_angle
+
+    height = width = 120
+    yy, xx = np.mgrid[0:height, 0:width]
+    phi = np.arctan2(yy - 60, xx - 60)
+    aster = phi % np.pi
+    vortex = (phi + np.pi / 2) % np.pi
+    assert abs(estimate_spiral_angle(aster, 60, 60)) < 0.15
+    assert abs(abs(estimate_spiral_angle(vortex, 60, 60)) - np.pi / 2) < 0.15
+
+
+def test_render_defect_map_writes_file(tmp_path):
+    import pandas as pd
+    from lung_nematic.defect_maps import render_defect_map
+
+    height = width = 120
+    yy, xx = np.mgrid[0:height, 0:width]
+    theta = (np.arctan2(yy - 60, xx - 60)) % np.pi
+    field = {"density": np.ones((height, width)),
+             "order": np.ones((height, width)), "theta": theta}
+    rgb = np.zeros((height, width, 3), dtype=np.uint8)
+    defect = pd.Series({"defect_id": 1, "x_px": 60.0, "y_px": 60.0, "charge": 1.0})
+    out = tmp_path / "map.png"
+    meta = render_defect_map(rgb, field, defect, out, window_px=100)
+    assert out.exists()
+    assert meta["spiral_class"] == "aster"
