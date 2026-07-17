@@ -33,7 +33,7 @@ import pandas as pd
 from scipy.ndimage import gaussian_filter
 
 from .config import AnalysisConfig
-from .defects import cluster_multiscale_defects, detect_defects_single_scale
+from .defects import cluster_multiscale_defects, single_scale_detections
 
 
 def compute_collagen_field(
@@ -143,7 +143,7 @@ def detect_multiscale_collagen_defects(
         )
         fields[float(sigma)] = field
 
-        detections = detect_defects_single_scale(field, tissue_mask, config)
+        detections = single_scale_detections(field, tissue_mask, config)
         if not detections.empty:
             detections["sigma_px"] = float(sigma)
             all_detections.append(detections)
