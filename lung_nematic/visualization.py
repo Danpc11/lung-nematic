@@ -56,6 +56,8 @@ def save_overlay(
     if not defects.empty:
         positive = defects.loc[defects["charge"] == 0.5]
         negative = defects.loc[defects["charge"] == -0.5]
+        plus_one = defects.loc[defects["charge"] == 1.0]
+        minus_one = defects.loc[defects["charge"] == -1.0]
 
         if not positive.empty:
             axis.scatter(
@@ -64,6 +66,7 @@ def save_overlay(
                 marker="+",
                 s=180,
                 linewidths=2.5,
+                color="#0072B2",
                 label="Candidate +1/2",
             )
 
@@ -74,7 +77,32 @@ def save_overlay(
                 marker="x",
                 s=150,
                 linewidths=2.5,
+                color="#D55E00",
                 label="Candidate -1/2",
+            )
+
+        if not plus_one.empty:
+            axis.scatter(
+                plus_one["x_px"],
+                plus_one["y_px"],
+                marker="*",
+                s=320,
+                linewidths=1.5,
+                facecolors="none",
+                edgecolors="#009E73",
+                label="Candidate +1",
+            )
+
+        if not minus_one.empty:
+            axis.scatter(
+                minus_one["x_px"],
+                minus_one["y_px"],
+                marker="s",
+                s=220,
+                linewidths=2.0,
+                facecolors="none",
+                edgecolors="#CC79A7",
+                label="Candidate -1",
             )
 
         axis.legend(loc="lower left")
@@ -131,19 +159,23 @@ def save_diagnostic_panel(
     if not defects.empty:
         positive = defects.loc[defects["charge"] == 0.5]
         negative = defects.loc[defects["charge"] == -0.5]
+        plus_one = defects.loc[defects["charge"] == 1.0]
+        minus_one = defects.loc[defects["charge"] == -1.0]
         axes[1, 2].scatter(
-            positive["x_px"],
-            positive["y_px"],
-            marker="+",
-            s=140,
-            linewidths=2,
+            positive["x_px"], positive["y_px"],
+            marker="+", s=140, linewidths=2, color="#0072B2",
         )
         axes[1, 2].scatter(
-            negative["x_px"],
-            negative["y_px"],
-            marker="x",
-            s=120,
-            linewidths=2,
+            negative["x_px"], negative["y_px"],
+            marker="x", s=120, linewidths=2, color="#D55E00",
+        )
+        axes[1, 2].scatter(
+            plus_one["x_px"], plus_one["y_px"],
+            marker="*", s=260, facecolors="none", edgecolors="#009E73",
+        )
+        axes[1, 2].scatter(
+            minus_one["x_px"], minus_one["y_px"],
+            marker="s", s=180, facecolors="none", edgecolors="#CC79A7",
         )
     axes[1, 2].set_title("Persistent candidate defects")
 
