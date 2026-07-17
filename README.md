@@ -9,7 +9,6 @@ It targets fibrotic lung, where the mechanically relevant architecture lives in
 the collagen rather than the nuclei.
 
 ---
-
 ## What it does
 
 For each image the pipeline builds a coarse-grained director field, finds
@@ -35,7 +34,6 @@ Two statistical controls:
   genuine defect core).
 
 ---
-
 ## Install
 
 ```bash
@@ -49,7 +47,7 @@ git clone https://github.com/Danpc11/lung-nematic.git
 cd lung-nematic
 pip install -e .
 ```
-
+---
 ## Usage
 
 ### Command line (batch)
@@ -66,15 +64,11 @@ written per image under `--output`, plus a `summary_metrics.csv`. An optional
 `--metadata` CSV (see `metadata_template.csv`) supplies `microns_per_pixel` and
 grouping so defect densities come out in mm^-2.
 
----
-
 ### Colab (no local setup)
 
-Open `notebooks/lung_nematic_colab.ipynb` in Google Colab. The code is hidden;
+Open `lung_nematic_colab.ipynb` in Google Colab. The code is hidden;
 you upload images (or load them from Drive), pick the field and the analyses
 with form controls, run, and download the results.
-
----
 
 ### Python
 
@@ -100,9 +94,7 @@ null = run_collagen_null_model(hed[:, :, 1], mask, config, n_permutations=199)
 rep = float(config.sigmas_px[len(config.sigmas_px) // 2])
 coloc = run_colocalization(defects, fields[rep], mask, config)
 ```
-
 ---
-
 ## Method
 
 Each nucleus (or eosin pixel) contributes a headless orientation. These are
@@ -115,6 +107,7 @@ edge. The collagen field uses the structure tensor of the eosin channel; the
 fiber direction is the dominant gradient rotated by 90 degrees, and coherence
 plays the role of local order.
 
+---
 ## Package layout
 
 ```text
@@ -136,7 +129,6 @@ lung_nematic/
 ```
 
 ---
-
 ## Outputs
 
 Per image: a tissue mask, nuclear segmentation, a director-field overlay with
@@ -146,7 +138,6 @@ batch driver also writes a combined `summary_metrics.csv` and a per-group
 aggregate.
 
 ---
-
 ## Limitations
 
 - Candidate defects only; not clinically validated.
@@ -155,7 +146,6 @@ aggregate.
 - The raw defect count can be a low-power statistic; interpret it together with
   the null model and colocalization, not on its own.
 - Without `microns_per_pixel`, defect densities in mm^-2 are unavailable.
-
 ---
 ## License
 
