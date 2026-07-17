@@ -38,19 +38,37 @@ def analyze_folder(
     metadata = load_metadata(metadata_csv)
     image_paths = discover_images(input_dir)
 
+    # Resolve metadata up front and require unique image_id values, so two
+    # images (e.g. control/sample01.tif and fibrosis/sample01.tif) cannot
+    # silently overwrite each other's results.
+    resolved = [
+        resolve_metadata(
+            image_path,
+            metadata,
+            config.default_microns_per_pixel,
+            root=input_dir,
+        )
+        for image_path in image_paths
+    ]
+    identifiers = [str(item["image_id"]) for item in resolved]
+    duplicates = sorted(
+        {name for name in identifiers if identifiers.count(name) > 1}
+    )
+    if duplicates:
+        raise ValueError(
+            "image_id values must be unique; duplicates found: "
+            f"{duplicates}. Provide a metadata CSV with unique image_id "
+            "(or relative_path) entries."
+        )
+
     summaries: list[dict] = []
     errors: list[dict] = []
 
-    for image_path in tqdm(
-        image_paths,
+    for image_path, image_metadata in tqdm(
+        list(zip(image_paths, resolved)),
         desc="Analyzing histology images",
     ):
         try:
-            image_metadata = resolve_metadata(
-                image_path,
-                metadata,
-                config.default_microns_per_pixel,
-            )
             summary = analyze_image(
                 image_path,
                 image_metadata,
