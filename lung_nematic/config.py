@@ -59,7 +59,7 @@ class AnalysisConfig:
     random_seed: int = 42
 
     # Physical scale
-    default_microns_per_pixel: float | None = None
+    default_microns_per_pixel: float | None = 0.114679  # 1 / 8.72 px per µm
 
     # Output
     save_diagnostic_panel: bool = True
