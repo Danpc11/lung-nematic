@@ -80,6 +80,16 @@ def summarize_image(
             if not defects.empty
             else 0
         ),
+        "n_plus_one": int(
+            (defects["charge"] == 1.0).sum()
+            if not defects.empty
+            else 0
+        ),
+        "n_minus_one": int(
+            (defects["charge"] == -1.0).sum()
+            if not defects.empty
+            else 0
+        ),
         "net_topological_charge": float(
             defects["charge"].sum()
             if not defects.empty
