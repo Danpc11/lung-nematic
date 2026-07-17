@@ -325,3 +325,187 @@ def save_null_histogram(result: dict, output_path: str | Path, title: str = "") 
     figure.tight_layout()
     figure.savefig(output, dpi=150, bbox_inches="tight")
     plt.close(figure)
+
+
+def _prepare_collagen(
+    eosin: np.ndarray,
+    tissue_mask: np.ndarray,
+    config: AnalysisConfig,
+    downsample: int,
+    inner_scale_px: float,
+) -> dict:
+    """Precompute the permutation-invariant parts of the collagen null."""
+    factor = max(1, int(downsample))
+    down_eosin = eosin[::factor, ::factor].astype(np.float32)
+    down_mask = tissue_mask[::factor, ::factor][
+        : down_eosin.shape[0], : down_eosin.shape[1]
+    ]
+
+    gx = gaussian_filter(down_eosin, inner_scale_px, order=[0, 1]) * down_mask
+    gy = gaussian_filter(down_eosin, inner_scale_px, order=[1, 0]) * down_mask
+    tys, txs = np.nonzero(down_mask)
+
+    scaled_config = replace(
+        config,
+        defect_grid_step_px=max(
+            1, round(config.defect_grid_step_px / factor)
+        ),
+        min_edge_distance_px=config.min_edge_distance_px / factor,
+        defect_cluster_radius_px=config.defect_cluster_radius_px / factor,
+    )
+    density = {
+        float(sigma): gaussian_filter(down_eosin, float(sigma) / factor)
+        for sigma in config.sigmas_px
+    }
+    return {
+        "factor": factor,
+        "mask": down_mask,
+        "gx": gx,
+        "gy": gy,
+        "tys": tys,
+        "txs": txs,
+        "config": scaled_config,
+        "density": density,
+        "sigmas": tuple(float(s) for s in config.sigmas_px),
+    }
+
+
+def _count_collagen_defects(
+    gx: np.ndarray, gy: np.ndarray, prepared: dict
+) -> tuple[int, int, int]:
+    """Detect collagen defects for a given gradient arrangement."""
+    factor = prepared["factor"]
+    sxx, syy, sxy = gx * gx, gy * gy, gx * gy
+
+    detections: list[pd.DataFrame] = []
+    for sigma in prepared["sigmas"]:
+        scaled_sigma = sigma / factor
+        jxx = gaussian_filter(sxx, scaled_sigma)
+        jyy = gaussian_filter(syy, scaled_sigma)
+        jxy = gaussian_filter(sxy, scaled_sigma)
+        coherence = np.clip(
+            np.sqrt((jxx - jyy) ** 2 + 4 * jxy**2) / (jxx + jyy + 1e-12), 0, 1
+        )
+        theta = ((0.5 * np.arctan2(2 * jxy, jxx - jyy)) + np.pi / 2) % np.pi
+        field = {
+            "density": prepared["density"][sigma],
+            "order": coherence,
+            "theta": theta,
+        }
+        detected = detect_defects_single_scale(
+            field, prepared["mask"], prepared["config"]
+        )
+        if not detected.empty:
+            detected["sigma_px"] = sigma
+            detections.append(detected)
+
+    if detections:
+        raw = pd.concat(detections, ignore_index=True)
+    else:
+        raw = pd.DataFrame()
+    defects = cluster_multiscale_defects(
+        raw, len(prepared["sigmas"]), prepared["config"]
+    )
+    if defects.empty:
+        return 0, 0, 0
+    return (
+        len(defects),
+        int((defects["charge"] == 0.5).sum()),
+        int((defects["charge"] == -0.5).sum()),
+    )
+
+
+def run_collagen_null_model(
+    eosin: np.ndarray,
+    tissue_mask: np.ndarray,
+    config: AnalysisConfig,
+    n_permutations: int = 199,
+    downsample: int = 3,
+    inner_scale_px: float = 1.5,
+    seed: int = 0,
+) -> dict:
+    """
+    Permutation null for the collagen (structure-tensor) defect count.
+
+    The collagen field is dense, so orientations cannot be shuffled per nucleus.
+    The analogue is to shuffle the per-pixel eosin gradient vectors among tissue
+    positions and then coarse-grain: this destroys spatial fiber coherence while
+    preserving the local orientation marginal and the collagen density field.
+    Detection is identical to the collagen pipeline, and both the observed
+    statistic and every permutation run through the same (down-sampled) path.
+
+    Returns the same keys as ``run_null_model`` plus ``null_totals``.
+    """
+    if n_permutations < 1:
+        raise ValueError("n_permutations must be at least 1.")
+
+    prepared = _prepare_collagen(
+        eosin, tissue_mask, config, downsample, inner_scale_px
+    )
+    gx, gy = prepared["gx"], prepared["gy"]
+    tys, txs = prepared["tys"], prepared["txs"]
+
+    observed_total, observed_plus, observed_minus = _count_collagen_defects(
+        gx, gy, prepared
+    )
+
+    values_x = gx[tys, txs]
+    values_y = gy[tys, txs]
+    rng = np.random.default_rng(seed)
+    null_totals = np.empty(n_permutations, dtype=int)
+    for index in range(n_permutations):
+        order = rng.permutation(values_x.size)
+        gx_perm = gx.copy()
+        gy_perm = gy.copy()
+        gx_perm[tys, txs] = values_x[order]
+        gy_perm[tys, txs] = values_y[order]
+        null_totals[index] = _count_collagen_defects(gx_perm, gy_perm, prepared)[0]
+
+    null_mean = float(null_totals.mean())
+    null_std = float(null_totals.std(ddof=1)) if n_permutations > 1 else 0.0
+    z_score = (
+        (observed_total - null_mean) / null_std
+        if null_std > 0
+        else float("nan")
+    )
+    log2_enrichment = (
+        float(np.log2(observed_total / null_mean))
+        if observed_total > 0 and null_mean > 0
+        else float("nan")
+    )
+    p_depletion = (1 + int(np.sum(null_totals <= observed_total))) / (
+        n_permutations + 1
+    )
+    p_enrichment = (1 + int(np.sum(null_totals >= observed_total))) / (
+        n_permutations + 1
+    )
+    p_two_sided = min(1.0, 2 * min(p_depletion, p_enrichment))
+    if observed_total < null_mean:
+        direction = "depleted"
+    elif observed_total > null_mean:
+        direction = "enriched"
+    else:
+        direction = "equal"
+
+    return {
+        "source": "collagen",
+        "n_permutations": n_permutations,
+        "null_mode": "gradient_shuffle",
+        "null_downsample": prepared["factor"],
+        "null_seed": seed,
+        "observed_total": observed_total,
+        "observed_plus_half": observed_plus,
+        "observed_minus_half": observed_minus,
+        "null_mean": null_mean,
+        "null_std": null_std,
+        "null_median": float(np.median(null_totals)),
+        "null_q2_5": float(np.percentile(null_totals, 2.5)),
+        "null_q97_5": float(np.percentile(null_totals, 97.5)),
+        "z_score": z_score,
+        "log2_enrichment": log2_enrichment,
+        "p_depletion": p_depletion,
+        "p_enrichment": p_enrichment,
+        "p_two_sided": p_two_sided,
+        "direction": direction,
+        "null_totals": null_totals,
+    }
