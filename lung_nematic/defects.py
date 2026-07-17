@@ -146,6 +146,110 @@ def detect_defects_single_scale(
     return pd.DataFrame(candidates)
 
 
+def detect_integer_defects_single_scale(
+    field: dict[str, np.ndarray],
+    tissue_mask: np.ndarray,
+    config: AnalysisConfig,
+) -> pd.DataFrame:
+    """Detect integer (+/-1) defects by winding on an N-point ring.
+
+    A +/-1 defect (aster, vortex or saddle) makes the director wind by 2*pi
+    around an enclosing loop, i.e. the doubled phase 2*theta winds by 4*pi. On a
+    4-corner plaquette each edge would carry ~pi of that winding, right at the
+    +/-pi branch cut where the sign is ambiguous. Sampling the director on a
+    ring of ``integer_defect_loop_points`` points (>= 6) keeps each per-edge
+    step well below pi, so the full winding is recovered. Candidates are kept
+    only when ``round(charge) == +/-1``; half-integer defects are left to
+    ``detect_defects_single_scale``.
+
+    Interpretation caveat: the ring measures the *total enclosed* winding, so a
+    +1 can be a genuine aster/vortex or two unresolved +1/2 cores inside the
+    ring. Read this layer alongside the +/-1/2 layer.
+    """
+    density = field["density"]
+    theta = field["theta"]
+    order = field["order"]
+    height, width = tissue_mask.shape
+
+    step = config.defect_grid_step_px
+    radius = int(config.integer_defect_loop_radius_px)
+    n_points = int(config.integer_defect_loop_points)
+
+    threshold = get_density_threshold(
+        density, tissue_mask, config.density_quantile
+    )
+    edge_distance = distance_transform_edt(tissue_mask)
+
+    angles = np.arange(n_points) * (2 * np.pi / n_points)
+    ring_dx = np.rint(radius * np.cos(angles)).astype(int)
+    ring_dy = np.rint(radius * np.sin(angles)).astype(int)
+
+    xs = np.arange(radius, width - radius, step)
+    ys = np.arange(radius, height - radius, step)
+
+    candidates: list[dict] = []
+    for cy in ys:
+        ry = cy + ring_dy
+        for cx in xs:
+            rx = cx + ring_dx
+
+            ring_tissue = tissue_mask[ry, rx]
+            ring_density = density[ry, rx]
+            ring_edge = edge_distance[ry, rx]
+
+            valid = (
+                np.all(ring_tissue)
+                and np.all(ring_density > threshold)
+                and np.all(ring_edge >= config.min_edge_distance_px)
+            )
+            if not valid:
+                continue
+
+            phase = 2 * theta[ry, rx]
+            # Closed-loop winding: phase[k+1]-phase[k], last edge wraps to first.
+            steps = wrap_angle(np.diff(phase, append=phase[:1]))
+            winding = float(steps.sum())
+
+            charge_raw = winding / (4 * np.pi)
+            charge = np.round(charge_raw * 2) / 2
+
+            if abs(charge) == 1.0:
+                candidates.append(
+                    {
+                        "x_px": float(cx),
+                        "y_px": float(cy),
+                        "charge": float(charge),
+                        "charge_raw": float(charge_raw),
+                        "local_order_mean": float(order[ry, rx].mean()),
+                        "local_density_mean": float(ring_density.mean()),
+                        "edge_distance_min_px": float(ring_edge.min()),
+                    }
+                )
+
+    return pd.DataFrame(candidates)
+
+
+def single_scale_detections(
+    field: dict[str, np.ndarray],
+    tissue_mask: np.ndarray,
+    config: AnalysisConfig,
+) -> pd.DataFrame:
+    """Half-integer detections, plus the +/-1 ring layer when enabled.
+
+    This is the single entry point the nuclear, collagen and fused multi-scale
+    detectors share, so the integer layer is available identically for all
+    three fields.
+    """
+    half = detect_defects_single_scale(field, tissue_mask, config)
+    if not config.detect_integer_defects:
+        return half
+    integer = detect_integer_defects_single_scale(field, tissue_mask, config)
+    frames = [frame for frame in (half, integer) if not frame.empty]
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
 def cluster_multiscale_defects(
     detections: pd.DataFrame,
     number_of_scales: int,
@@ -157,7 +261,7 @@ def cluster_multiscale_defects(
     rows: list[dict] = []
     defect_id = 1
 
-    for charge in (0.5, -0.5):
+    for charge in sorted(detections["charge"].unique()):
         subset = detections.loc[
             detections["charge"] == charge
         ].copy()
@@ -240,7 +344,7 @@ def detect_multiscale_defects(
         )
         fields[float(sigma)] = field
 
-        detections = detect_defects_single_scale(
+        detections = single_scale_detections(
             field,
             tissue_mask,
             config,
