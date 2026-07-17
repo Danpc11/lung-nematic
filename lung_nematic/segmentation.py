@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import distance_transform_edt
 from skimage import filters, measure, morphology, segmentation
+
+from ._compat import remove_small_holes, remove_small_objects
 from skimage.feature import peak_local_max
 
 from .config import AnalysisConfig
@@ -47,17 +49,17 @@ def segment_nuclei(
 
     threshold = _safe_threshold(values)
     nuclear_mask = (hematoxylin > threshold) & tissue_mask
-    nuclear_mask = morphology.remove_small_objects(
+    nuclear_mask = remove_small_objects(
         nuclear_mask,
-        max_size=max(5, int(config.min_nucleus_area_px * 0.5)),
+        max(5, int(config.min_nucleus_area_px * 0.5)),
     )
     nuclear_mask = morphology.opening(
         nuclear_mask,
         morphology.disk(1),
     )
-    nuclear_mask = morphology.remove_small_holes(
+    nuclear_mask = remove_small_holes(
         nuclear_mask,
-        max_size=20,
+        20,
     )
 
     distance = distance_transform_edt(nuclear_mask)
