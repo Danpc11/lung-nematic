@@ -34,7 +34,7 @@
   "colocalization_annulus_inner_frac": 1.0,
   "colocalization_annulus_outer_frac": 2.0,
   "random_seed": 42,
-  "default_microns_per_pixel": null,
+  "default_microns_per_pixel": 0.114679,
   "save_diagnostic_panel": true,
   "save_intermediate_arrays": false,
   "save_defect_maps": false,
