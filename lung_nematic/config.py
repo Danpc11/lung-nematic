@@ -1,369 +1,197 @@
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
-from scipy.ndimage import distance_transform_edt
-from sklearn.cluster import DBSCAN
-
-from .config import AnalysisConfig
-from .nematic import compute_nematic_field, get_density_threshold
+from dataclasses import asdict, dataclass, fields
+import json
+from pathlib import Path
+from typing import Any
 
 
-DEFECT_COLUMNS = [
-    "defect_id",
-    "x_px",
-    "y_px",
-    "charge",
-    "scales_detected",
-    "scale_fraction",
-    "mean_local_order",
-    "mean_edge_distance_px",
-    "confidence",
-    "sigmas_px",
-]
+@dataclass
+class AnalysisConfig:
+    # Nuclear segmentation
+    min_nucleus_area_px: int = 20
+    max_nucleus_area_px: int = 700
+    min_major_axis_px: float = 4.0
+    max_major_axis_px: float = 60.0
+    min_minor_axis_px: float = 2.5
+    max_aspect_ratio: float = 6.0
+    min_aspect_ratio_for_orientation: float = 1.35
 
+    # Nematic field
+    sigmas_px: tuple[float, ...] = (40.0, 55.0, 70.0, 85.0)
+    field_grid_step_px: int = 64
+    min_local_order_for_display: float = 0.12
+    density_quantile: float = 0.45
 
-def wrap_angle(angle):
-    return (angle + np.pi) % (2 * np.pi) - np.pi
+    # Defect detection
+    defect_grid_step_px: int = 24
+    min_edge_distance_px: int = 30
+    defect_cluster_radius_px: float = 70.0
+    min_scales_for_persistence: int = 2
 
+    # Integer (+/-1) defect layer (opt-in). Detected on an N-point ring so the
+    # full 2*pi winding of an aster/vortex/saddle is resolved, which a 4-corner
+    # plaquette cannot do (its per-edge phase step sits at the +/-pi branch cut).
+    detect_integer_defects: bool = False
+    integer_defect_loop_radius_px: int = 30
+    integer_defect_loop_points: int = 8
 
-def detect_defects_single_scale(
-    field: dict[str, np.ndarray],
-    tissue_mask: np.ndarray,
-    config: AnalysisConfig,
-) -> pd.DataFrame:
-    density = field["density"]
-    theta = field["theta"]
-    order = field["order"]
-    height, width = tissue_mask.shape
+    # Collagen / fused fields
+    collagen_inner_scale_px: float = 1.5
+    mask_normalized_smoothing: bool = False
 
-    xs = np.arange(0, width, config.defect_grid_step_px)
-    ys = np.arange(0, height, config.defect_grid_step_px)
+    # Analysis selection
+    field_type: str = "nuclear"
+    run_null: bool = False
+    run_colocalization: bool = False
 
-    phase = 2 * theta[np.ix_(ys, xs)]
-    sampled_density = density[np.ix_(ys, xs)]
-    sampled_order = order[np.ix_(ys, xs)]
-    sampled_tissue = tissue_mask[np.ix_(ys, xs)]
+    # Null model
+    n_permutations: int = 199
+    null_mode: str = "shuffle"
+    null_downsample: int = 2
 
-    edge_distance = distance_transform_edt(tissue_mask)
-    sampled_edge = edge_distance[np.ix_(ys, xs)]
+    # Colocalization
+    n_bootstrap: int = 2000
+    colocalization_annulus_inner_frac: float = 1.0
+    colocalization_annulus_outer_frac: float = 2.0
 
-    threshold = get_density_threshold(
-        density,
-        tissue_mask,
-        config.density_quantile,
-    )
+    # Reproducibility
+    random_seed: int = 42
 
-    candidates: list[dict] = []
+    # Physical scale
+    default_microns_per_pixel: float | None = None
 
-    for row in range(len(ys) - 1):
-        for col in range(len(xs) - 1):
-            corner_phase = np.array(
-                [
-                    phase[row, col],
-                    phase[row, col + 1],
-                    phase[row + 1, col + 1],
-                    phase[row + 1, col],
-                ]
+    # Output
+    save_diagnostic_panel: bool = True
+    save_intermediate_arrays: bool = False
+    save_defect_maps: bool = False
+    defect_map_window_px: int = 220
+
+    def validate(self) -> None:
+        if self.min_nucleus_area_px <= 0:
+            raise ValueError("min_nucleus_area_px must be positive.")
+        if self.max_nucleus_area_px <= self.min_nucleus_area_px:
+            raise ValueError(
+                "max_nucleus_area_px must exceed min_nucleus_area_px."
+            )
+        if not self.sigmas_px:
+            raise ValueError("sigmas_px must contain at least one value.")
+        if any(value <= 0 for value in self.sigmas_px):
+            raise ValueError("All sigmas_px values must be positive.")
+        if not 0 <= self.density_quantile < 1:
+            raise ValueError("density_quantile must be in [0, 1).")
+        if self.min_scales_for_persistence < 1:
+            raise ValueError(
+                "min_scales_for_persistence must be at least 1."
+            )
+        if self.min_scales_for_persistence > len(self.sigmas_px):
+            raise ValueError(
+                "min_scales_for_persistence cannot exceed the number "
+                "of smoothing scales."
+            )
+        if (
+            self.default_microns_per_pixel is not None
+            and self.default_microns_per_pixel <= 0
+        ):
+            raise ValueError(
+                "default_microns_per_pixel must be positive or null."
             )
 
-            winding = sum(
-                wrap_angle(
-                    corner_phase[(index + 1) % 4]
-                    - corner_phase[index]
-                )
-                for index in range(4)
+        # Pixel-based radii and steps must be usable.
+        for name in (
+            "field_grid_step_px",
+            "defect_grid_step_px",
+        ):
+            if getattr(self, name) < 1:
+                raise ValueError(f"{name} must be at least 1.")
+        if self.min_edge_distance_px < 0:
+            raise ValueError("min_edge_distance_px must be non-negative.")
+        if self.defect_cluster_radius_px <= 0:
+            raise ValueError("defect_cluster_radius_px must be positive.")
+        if self.integer_defect_loop_radius_px < 1:
+            raise ValueError("integer_defect_loop_radius_px must be at least 1.")
+        if self.integer_defect_loop_points < 6:
+            raise ValueError(
+                "integer_defect_loop_points must be at least 6 to resolve a "
+                "full +/-1 winding without branch-cut ambiguity."
+            )
+        if self.defect_map_window_px < 16:
+            raise ValueError("defect_map_window_px must be at least 16.")
+        if self.collagen_inner_scale_px <= 0:
+            raise ValueError("collagen_inner_scale_px must be positive.")
+
+        # Analysis selection.
+        if self.field_type not in {"nuclear", "collagen", "fused"}:
+            raise ValueError(
+                "field_type must be 'nuclear', 'collagen' or 'fused'."
+            )
+        if self.null_mode not in {"shuffle", "uniform"}:
+            raise ValueError("null_mode must be 'shuffle' or 'uniform'.")
+        for name in ("n_permutations", "n_bootstrap", "null_downsample"):
+            if getattr(self, name) < 1:
+                raise ValueError(f"{name} must be at least 1.")
+
+        # Colocalization annulus.
+        if self.colocalization_annulus_inner_frac < 0:
+            raise ValueError(
+                "colocalization_annulus_inner_frac must be non-negative."
+            )
+        if (
+            self.colocalization_annulus_outer_frac
+            <= self.colocalization_annulus_inner_frac
+        ):
+            raise ValueError(
+                "colocalization_annulus_outer_frac must exceed the inner "
+                "fraction."
             )
 
-            # phase = 2*theta, therefore q = winding/(4*pi)
-            charge_raw = winding / (4 * np.pi)
-            charge = np.round(charge_raw * 2) / 2
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["sigmas_px"] = list(self.sigmas_px)
+        return data
 
-            corner_density = np.array(
-                [
-                    sampled_density[row, col],
-                    sampled_density[row, col + 1],
-                    sampled_density[row + 1, col + 1],
-                    sampled_density[row + 1, col],
-                ]
-            )
-            corner_order = np.array(
-                [
-                    sampled_order[row, col],
-                    sampled_order[row, col + 1],
-                    sampled_order[row + 1, col + 1],
-                    sampled_order[row + 1, col],
-                ]
-            )
-            corner_tissue = np.array(
-                [
-                    sampled_tissue[row, col],
-                    sampled_tissue[row, col + 1],
-                    sampled_tissue[row + 1, col + 1],
-                    sampled_tissue[row + 1, col],
-                ]
-            )
-            corner_edge = np.array(
-                [
-                    sampled_edge[row, col],
-                    sampled_edge[row, col + 1],
-                    sampled_edge[row + 1, col + 1],
-                    sampled_edge[row + 1, col],
-                ]
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AnalysisConfig":
+        valid_names = {item.name for item in fields(cls)}
+        unknown = sorted(set(data) - valid_names)
+        if unknown:
+            raise ValueError(f"Unknown configuration fields: {unknown}")
+
+        normalized = dict(data)
+        if "sigmas_px" in normalized:
+            normalized["sigmas_px"] = tuple(
+                float(value) for value in normalized["sigmas_px"]
             )
 
-            valid = (
-                np.all(corner_tissue)
-                and np.all(corner_density > threshold)
-                and np.all(
-                    corner_edge >= config.min_edge_distance_px
-                )
-            )
-
-            if valid and abs(charge) == 0.5:
-                candidates.append(
-                    {
-                        "x_px": float(
-                            xs[col] + config.defect_grid_step_px / 2
-                        ),
-                        "y_px": float(
-                            ys[row] + config.defect_grid_step_px / 2
-                        ),
-                        "charge": float(charge),
-                        "charge_raw": float(charge_raw),
-                        "local_order_mean": float(
-                            corner_order.mean()
-                        ),
-                        "local_density_mean": float(
-                            corner_density.mean()
-                        ),
-                        "edge_distance_min_px": float(
-                            corner_edge.min()
-                        ),
-                    }
-                )
-
-    return pd.DataFrame(candidates)
+        config = cls(**normalized)
+        config.validate()
+        return config
 
 
-def detect_integer_defects_single_scale(
-    field: dict[str, np.ndarray],
-    tissue_mask: np.ndarray,
-    config: AnalysisConfig,
-) -> pd.DataFrame:
-    """Detect integer (+/-1) defects by winding on an N-point ring.
+def load_config(path: str | Path) -> AnalysisConfig:
+    config_path = Path(path)
+    with config_path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    return AnalysisConfig.from_dict(data)
 
-    A +/-1 defect (aster, vortex or saddle) makes the director wind by 2*pi
-    around an enclosing loop, i.e. the doubled phase 2*theta winds by 4*pi. On a
-    4-corner plaquette each edge would carry ~pi of that winding, right at the
-    +/-pi branch cut where the sign is ambiguous. Sampling the director on a
-    ring of ``integer_defect_loop_points`` points (>= 6) keeps each per-edge
-    step well below pi, so the full winding is recovered. Candidates are kept
-    only when ``round(charge) == +/-1``; half-integer defects are left to
-    ``detect_defects_single_scale``.
 
-    Interpretation caveat: the ring measures the *total enclosed* winding, so a
-    +1 can be a genuine aster/vortex or two unresolved +1/2 cores inside the
-    ring. Read this layer alongside the +/-1/2 layer.
+def save_config(config: AnalysisConfig, path: str | Path) -> None:
+    config.validate()
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(config.to_dict(), handle, indent=2)
+
+
+def load_default_config() -> AnalysisConfig:
+    """Load the default configuration shipped inside the installed package.
+
+    Works regardless of the current working directory, so it is safe after a
+    plain ``pip install git+...`` where the repository's ``config/`` folder is
+    not present.
     """
-    density = field["density"]
-    theta = field["theta"]
-    order = field["order"]
-    height, width = tissue_mask.shape
+    from importlib.resources import files
 
-    step = config.defect_grid_step_px
-    radius = int(config.integer_defect_loop_radius_px)
-    n_points = int(config.integer_defect_loop_points)
-
-    threshold = get_density_threshold(
-        density, tissue_mask, config.density_quantile
-    )
-    edge_distance = distance_transform_edt(tissue_mask)
-
-    angles = np.arange(n_points) * (2 * np.pi / n_points)
-    ring_dx = np.rint(radius * np.cos(angles)).astype(int)
-    ring_dy = np.rint(radius * np.sin(angles)).astype(int)
-
-    xs = np.arange(radius, width - radius, step)
-    ys = np.arange(radius, height - radius, step)
-
-    candidates: list[dict] = []
-    for cy in ys:
-        ry = cy + ring_dy
-        for cx in xs:
-            rx = cx + ring_dx
-
-            ring_tissue = tissue_mask[ry, rx]
-            ring_density = density[ry, rx]
-            ring_edge = edge_distance[ry, rx]
-
-            valid = (
-                np.all(ring_tissue)
-                and np.all(ring_density > threshold)
-                and np.all(ring_edge >= config.min_edge_distance_px)
-            )
-            if not valid:
-                continue
-
-            phase = 2 * theta[ry, rx]
-            # Closed-loop winding: phase[k+1]-phase[k], last edge wraps to first.
-            steps = wrap_angle(np.diff(phase, append=phase[:1]))
-            winding = float(steps.sum())
-
-            charge_raw = winding / (4 * np.pi)
-            charge = np.round(charge_raw * 2) / 2
-
-            if abs(charge) == 1.0:
-                candidates.append(
-                    {
-                        "x_px": float(cx),
-                        "y_px": float(cy),
-                        "charge": float(charge),
-                        "charge_raw": float(charge_raw),
-                        "local_order_mean": float(order[ry, rx].mean()),
-                        "local_density_mean": float(ring_density.mean()),
-                        "edge_distance_min_px": float(ring_edge.min()),
-                    }
-                )
-
-    return pd.DataFrame(candidates)
-
-
-def single_scale_detections(
-    field: dict[str, np.ndarray],
-    tissue_mask: np.ndarray,
-    config: AnalysisConfig,
-) -> pd.DataFrame:
-    """Half-integer detections, plus the +/-1 ring layer when enabled.
-
-    This is the single entry point the nuclear, collagen and fused multi-scale
-    detectors share, so the integer layer is available identically for all
-    three fields.
-    """
-    half = detect_defects_single_scale(field, tissue_mask, config)
-    if not config.detect_integer_defects:
-        return half
-    integer = detect_integer_defects_single_scale(field, tissue_mask, config)
-    frames = [frame for frame in (half, integer) if not frame.empty]
-    if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
-
-
-def cluster_multiscale_defects(
-    detections: pd.DataFrame,
-    number_of_scales: int,
-    config: AnalysisConfig,
-) -> pd.DataFrame:
-    if detections.empty:
-        return pd.DataFrame(columns=DEFECT_COLUMNS)
-
-    rows: list[dict] = []
-    defect_id = 1
-
-    for charge in sorted(detections["charge"].unique()):
-        subset = detections.loc[
-            detections["charge"] == charge
-        ].copy()
-        if subset.empty:
-            continue
-
-        labels = DBSCAN(
-            eps=config.defect_cluster_radius_px,
-            min_samples=config.min_scales_for_persistence,
-        ).fit(subset[["x_px", "y_px"]]).labels_
-        subset["cluster"] = labels
-
-        for cluster_id in sorted(set(labels)):
-            if cluster_id == -1:
-                continue
-
-            cluster = subset.loc[subset["cluster"] == cluster_id]
-            scales_detected = int(cluster["sigma_px"].nunique())
-            if scales_detected < config.min_scales_for_persistence:
-                continue
-
-            scale_fraction = scales_detected / number_of_scales
-            mean_order = float(cluster["local_order_mean"].mean())
-            mean_edge = float(
-                cluster["edge_distance_min_px"].mean()
-            )
-
-            # Conservative 0-1 score: persistence dominates, while
-            # local order adds supporting evidence.
-            confidence = float(
-                np.clip(
-                    0.75 * scale_fraction
-                    + 0.25 * mean_order,
-                    0,
-                    1,
-                )
-            )
-
-            rows.append(
-                {
-                    "defect_id": defect_id,
-                    "x_px": float(cluster["x_px"].mean()),
-                    "y_px": float(cluster["y_px"].mean()),
-                    "charge": float(charge),
-                    "scales_detected": scales_detected,
-                    "scale_fraction": scale_fraction,
-                    "mean_local_order": mean_order,
-                    "mean_edge_distance_px": mean_edge,
-                    "confidence": confidence,
-                    "sigmas_px": ",".join(
-                        f"{value:g}"
-                        for value in sorted(
-                            cluster["sigma_px"].unique()
-                        )
-                    ),
-                }
-            )
-            defect_id += 1
-
-    return pd.DataFrame(rows, columns=DEFECT_COLUMNS)
-
-
-def detect_multiscale_defects(
-    oriented_nuclei: pd.DataFrame,
-    tissue_mask: np.ndarray,
-    config: AnalysisConfig,
-) -> tuple[
-    pd.DataFrame,
-    dict[float, dict[str, np.ndarray]],
-    pd.DataFrame,
-]:
-    fields: dict[float, dict[str, np.ndarray]] = {}
-    all_detections: list[pd.DataFrame] = []
-
-    for sigma in config.sigmas_px:
-        field = compute_nematic_field(
-            oriented_nuclei,
-            tissue_mask.shape,
-            sigma,
-        )
-        fields[float(sigma)] = field
-
-        detections = single_scale_detections(
-            field,
-            tissue_mask,
-            config,
-        )
-        if not detections.empty:
-            detections["sigma_px"] = float(sigma)
-            all_detections.append(detections)
-
-    if all_detections:
-        raw_detections = pd.concat(
-            all_detections,
-            ignore_index=True,
-        )
-    else:
-        raw_detections = pd.DataFrame()
-
-    defects = cluster_multiscale_defects(
-        raw_detections,
-        len(config.sigmas_px),
-        config,
-    )
-    return defects, fields, raw_detections
+    resource = files("lung_nematic.data").joinpath("default_config.json")
+    data = json.loads(resource.read_text(encoding="utf-8"))
+    return AnalysisConfig.from_dict(data)
