@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 from skimage import color, filters, morphology
 
+from ._compat import remove_small_holes, remove_small_objects
+
 
 def _safe_otsu(values: np.ndarray, fallback: float) -> float:
     finite = values[np.isfinite(values)]
@@ -42,7 +44,7 @@ def make_tissue_mask(
         | (eosin > eosin_threshold)
     )
     mask = morphology.closing(mask, morphology.disk(3))
-    mask = morphology.remove_small_objects(mask, max_size=150)
-    mask = morphology.remove_small_holes(mask, max_size=250)
+    mask = remove_small_objects(mask, 150)
+    mask = remove_small_holes(mask, 250)
 
     return mask.astype(bool), hed
