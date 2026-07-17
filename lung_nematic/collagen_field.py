@@ -40,6 +40,8 @@ def compute_collagen_field(
     eosin: np.ndarray,
     sigma_px: float,
     inner_scale_px: float = 1.5,
+    tissue_mask: np.ndarray | None = None,
+    mask_normalized: bool = False,
     eps: float = 1e-12,
 ) -> dict[str, np.ndarray]:
     """
@@ -56,6 +58,12 @@ def compute_collagen_field(
     inner_scale_px:
         Gradient (noise) scale. Small; suppresses pixel noise before the
         derivative without smearing fiber orientation.
+    tissue_mask, mask_normalized:
+        When ``mask_normalized`` is True and a mask is given, the structure
+        tensor is integrated with mask-normalized convolution
+        (``gauss(field * mask) / gauss(mask)``). This confines fiber-orientation
+        integration to tissue so the field does not mix orientations across an
+        alveolar lumen.
 
     Returns
     -------
@@ -70,17 +78,27 @@ def compute_collagen_field(
     gx = gaussian_filter(image, inner_scale_px, order=[0, 1])
     gy = gaussian_filter(image, inner_scale_px, order=[1, 0])
 
-    # Structure tensor components smoothed at the integration scale.
-    jxx = gaussian_filter(gx * gx, float(sigma_px))
-    jyy = gaussian_filter(gy * gy, float(sigma_px))
-    jxy = gaussian_filter(gx * gy, float(sigma_px))
+    sigma = float(sigma_px)
+    if mask_normalized and tissue_mask is not None:
+        support = tissue_mask.astype(np.float32)
+        gx = gx * support
+        gy = gy * support
+        normaliser = np.maximum(gaussian_filter(support, sigma), eps)
+        jxx = gaussian_filter(gx * gx, sigma) / normaliser
+        jyy = gaussian_filter(gy * gy, sigma) / normaliser
+        jxy = gaussian_filter(gx * gy, sigma) / normaliser
+        density = gaussian_filter(image * support, sigma) / normaliser
+    else:
+        jxx = gaussian_filter(gx * gx, sigma)
+        jyy = gaussian_filter(gy * gy, sigma)
+        jxy = gaussian_filter(gx * gy, sigma)
+        density = gaussian_filter(image, sigma)
 
     # Dominant gradient direction, then rotate 90 deg to get the fiber direction.
     theta_gradient = 0.5 * np.arctan2(2 * jxy, jxx - jyy)
     theta = (theta_gradient + np.pi / 2) % np.pi
 
     coherence = np.sqrt((jxx - jyy) ** 2 + 4 * jxy**2) / (jxx + jyy + eps)
-    density = gaussian_filter(image, float(sigma_px))
 
     return {
         "density": density,
@@ -116,7 +134,13 @@ def detect_multiscale_collagen_defects(
     all_detections: list[pd.DataFrame] = []
 
     for sigma in config.sigmas_px:
-        field = compute_collagen_field(eosin, sigma, inner_scale_px)
+        field = compute_collagen_field(
+            eosin,
+            sigma,
+            inner_scale_px,
+            tissue_mask=tissue_mask,
+            mask_normalized=config.mask_normalized_smoothing,
+        )
         fields[float(sigma)] = field
 
         detections = detect_defects_single_scale(field, tissue_mask, config)
