@@ -7,9 +7,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .collagen_field import detect_multiscale_collagen_defects
+from .collagen_field import (
+    compute_collagen_field,
+    detect_multiscale_collagen_defects,
+)
 from .colocalization import run_colocalization as _run_colocalization
 from .config import AnalysisConfig
+from .defect_maps import render_defect_maps
 from .defects import detect_multiscale_defects
 from .fused_field import detect_multiscale_fused_defects
 from .io_utils import read_rgb
@@ -189,6 +193,27 @@ def analyze_image(
             if key.endswith("_null"):
                 continue
             summary[f"coloc_{key}"] = value
+
+    if config.save_defect_maps and not defects.empty:
+        integer_field = None
+        if (defects["charge"].abs() == 1.0).any():
+            if field_type == "collagen":
+                integer_field = field
+            else:
+                integer_field = compute_collagen_field(
+                    eosin, representative_sigma,
+                    config.collagen_inner_scale_px,
+                    tissue_mask=tissue_mask,
+                    mask_normalized=config.mask_normalized_smoothing,
+                )
+        maps = render_defect_maps(
+            rgb, field, defects, image_output / "defect_maps", tag, config,
+            integer_field=integer_field,
+        )
+        if not maps.empty:
+            maps.to_csv(
+                image_output / f"{tag}_defect_maps.csv", index=False
+            )
 
     with (image_output / f"{tag}_summary.json").open(
         "w", encoding="utf-8"
