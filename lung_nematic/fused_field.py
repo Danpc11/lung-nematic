@@ -27,7 +27,7 @@ import pandas as pd
 
 from .config import AnalysisConfig
 from .collagen_field import compute_collagen_field
-from .defects import cluster_multiscale_defects, detect_defects_single_scale
+from .defects import cluster_multiscale_defects, single_scale_detections
 from .nematic import compute_nematic_field
 
 
@@ -111,7 +111,7 @@ def detect_multiscale_fused_defects(
         fused = compute_fused_field(nuclear_field, collagen_field)
         fields[float(sigma)] = fused
 
-        detections = detect_defects_single_scale(fused, tissue_mask, config)
+        detections = single_scale_detections(fused, tissue_mask, config)
         if not detections.empty:
             detections["sigma_px"] = float(sigma)
             all_detections.append(detections)
