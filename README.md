@@ -8,6 +8,8 @@ lung histology (H&E), with three orientation sources and statistical controls.
 It targets fibrotic lung, where the mechanically relevant architecture lives in
 the collagen rather than the nuclei.
 
+---
+
 ## What it does
 
 For each image the pipeline builds a coarse-grained director field, finds
@@ -31,6 +33,8 @@ Two statistical controls:
 - **colocalization test** — asks whether local order at defect locations
   differs from random tissue (a bootstrap control; local order drops at a
   genuine defect core).
+
+---
 
 ## Install
 
@@ -62,11 +66,15 @@ written per image under `--output`, plus a `summary_metrics.csv`. An optional
 `--metadata` CSV (see `metadata_template.csv`) supplies `microns_per_pixel` and
 grouping so defect densities come out in mm^-2.
 
+---
+
 ### Colab (no local setup)
 
 Open `notebooks/lung_nematic_colab.ipynb` in Google Colab. The code is hidden;
 you upload images (or load them from Drive), pick the field and the analyses
 with form controls, run, and download the results.
+
+---
 
 ### Python
 
@@ -92,6 +100,8 @@ null = run_collagen_null_model(hed[:, :, 1], mask, config, n_permutations=199)
 rep = float(config.sigmas_px[len(config.sigmas_px) // 2])
 coloc = run_colocalization(defects, fields[rep], mask, config)
 ```
+
+---
 
 ## Method
 
@@ -125,6 +135,8 @@ lung_nematic/
 └── batch.py             folder-level batch driver
 ```
 
+---
+
 ## Outputs
 
 Per image: a tissue mask, nuclear segmentation, a director-field overlay with
@@ -132,6 +144,8 @@ marked candidate defects, per-nucleus and per-defect CSVs, a metrics summary
 (JSON + CSV), and, when enabled, null-model and colocalization histograms. The
 batch driver also writes a combined `summary_metrics.csv` and a per-group
 aggregate.
+
+---
 
 ## Limitations
 
@@ -142,6 +156,7 @@ aggregate.
   the null model and colocalization, not on its own.
 - Without `microns_per_pixel`, defect densities in mm^-2 are unavailable.
 
+---
 ## License
 
-MIT.
+See [`LICENSE`](LICENSE).
