@@ -45,6 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--collagen-inner-scale", type=float, default=None)
     parser.add_argument("--mask-normalized-smoothing",
                         action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--detect-integer-defects",
+                        action=argparse.BooleanOptionalAction, default=None,
+                        help="Also detect +/-1 defects (ring winding layer).")
+    parser.add_argument("--integer-loop-radius", type=int, default=None)
+    parser.add_argument("--integer-loop-points", type=int, default=None)
+    parser.add_argument("--save-defect-maps",
+                        action=argparse.BooleanOptionalAction, default=None,
+                        help="Render a director map per detected defect.")
+    parser.add_argument("--defect-map-window", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for all stochastic controls.")
 
@@ -62,6 +71,11 @@ def _apply_overrides(config, args):
         "n_bootstrap": args.n_bootstrap,
         "collagen_inner_scale_px": args.collagen_inner_scale,
         "mask_normalized_smoothing": args.mask_normalized_smoothing,
+        "detect_integer_defects": args.detect_integer_defects,
+        "integer_defect_loop_radius_px": args.integer_loop_radius,
+        "integer_defect_loop_points": args.integer_loop_points,
+        "save_defect_maps": args.save_defect_maps,
+        "defect_map_window_px": args.defect_map_window,
         "random_seed": args.seed,
     }
     overrides = {k: v for k, v in mapping.items() if v is not None}
