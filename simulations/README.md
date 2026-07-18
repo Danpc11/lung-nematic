@@ -1,157 +1,108 @@
-# fibrofocus
+# simulations / alveolar
 
-Agent-based active-nematic simulation of **fibroblastic focus** formation in
-idiopathic pulmonary fibrosis, built to locate the **point of no return**: the
-parameter values beyond which a lesion becomes self-sustaining after the
-epithelial insult is withdrawn.
-
-Elongated agents (fibroblasts and myofibroblasts) migrate, align nematically,
-proliferate and deposit collagen on a substrate whose stiffness evolves in
-response. Nematic order and `±1/2` topological defects are **not imposed**:
-they emerge once density crosses the isotropic–nematic crossover, as in
-confluent fibroblast monolayers.
-
----
-## The mechanism
-
-1. An **ATII lesion** in the centre of the domain lays down a provisional
-   matrix, stiffening it above the mechanical TGF-β activation threshold but
-   below the myofibroblast threshold. The insult primes without committing.
-2. **Durotaxis** drags fibroblasts up the stiffness gradient into the lesion.
-3. Cells that experience stiffness above threshold **activate** into
-   myofibroblasts, with strong **hysteresis**: reversion is roughly twenty
-   times slower than activation (mechanical memory).
-4. Myofibroblasts **deposit collagen**, stiffening the matrix further, which
-   recruits and activates more cells: a positive feedback loop.
-5. **Matrix turnover** opposes it. Whether the focus persists is decided by the
-   competition between deposition and turnover, and by how much memory the
-   cells carry.
-
-The insult stops at `injury_duration_h`. What happens afterwards is the whole
-question.
-
----
-## Two ways to ask the question
-
-**`model.py` + `render.py` — the agent simulation.** Full spatial dynamics,
-emergent nematic texture, defects, and a movie. Expensive (~1 min per run).
-
-**`bistability.py` — the reduced model.** The same biology collapsed onto one
-equation for lesion stiffness:
+Stage 1+2 of the pulmonary fibrosis model: **alveolar architecture and the
+epithelial state machine**. This is the layer that was missing from the
+mesenchymal (fibroblastic focus) simulation — it supplies the lesion that
+starts everything, and the mesenchymal cells that the focus is built from.
 
 ```
-dE/dt = k_dep · f(E) · (1 − E/E_max) − k_deg · (E − E_healthy)
+simulations/alveolar/
+├── geometry.py   Voronoi alveoli, septa, epithelial segments
+├── model.py      state machine, surfactant, collapse, induration
+└── render.py     frames, GIF and MP4
 ```
 
-with `f(E)` the steady-state myofibroblast fraction from the same
-hysteretic switch. When `dE/dt` has three roots the system is **bistable**:
+## What it models
+
+The alveolar region is a Voronoi tessellation of a jittered hexagonal lattice:
+each cell is an alveolus (~200 µm), each shared ridge an interalveolar septum.
+Septa are cut into ~12 µm segments, and every segment carries one epithelial
+state:
 
 ```
-E_healthy   <   E_separatrix   <   E_fibrotic
- stable          UNSTABLE          stable
+empty (denuded) → AT2 → KRT8+ transitional → AT1        (repair succeeds)
+                              ↓
+                    aberrant basaloid → EMT → mesenchyme (repair fails)
 ```
 
-`E_separatrix` **is** the point of no return. This runs in milliseconds, so it
-can be bisected and scanned, then checked against the agent model.
+**The lesion is a differentiation failure, not a wound.** Inside the injury
+region, AT2 cells are driven to attempt differentiation (`injury_activation_boost`)
+while the exit to AT1 is suppressed (`repair_failure_factor`). Neither on its
+own does anything: driving without blocking just cycles cells through the
+transitional state; blocking without driving leaves it empty. Together they
+create a reservoir of KRT8+ cells that can stall.
 
----
-## Install and use
+**Mechanics closes the loop.** AT2 cells produce surfactant; surfactant sets
+alveolar surface tension; the Laplace pressure `2γ/r` is opposed by tissue
+recoil. When AT2 cells are consumed by the transitional state, surfactant
+falls, and alveoli derecruit — smallest first, because `2γ/r` is largest there.
+Collapsed alveoli suffer faster epithelial damage and produce less surfactant,
+and after `induration_time_h` in that state they become **indurated**:
+irreversibly lost. Collapse precedes fibrosis rather than following it.
 
-```bash
-pip install numpy scipy pandas matplotlib imageio imageio-ffmpeg
+## Running it
+
+```python
+from alveolar import AlveolarConfig, run_and_record
+
+config = AlveolarConfig(
+    total_time_h=1440.0,            # 60 days
+    repair_failure_factor=0.10,     # severity of the AT2→AT1 block
+    stall_promotion_strength=25.0,  # mesenchyme → epithelium feedback
+    aberrant_clearance_rate=0.0005, # apoptosis resistance (lower = more resistant)
+)
+run_and_record(config, "results/progressive", frame_every_h=24.0)
 ```
 
-Run a scenario and write the movie:
+A 60-day run takes about 20 s including rendering.
 
-```bash
-python -m fibrofocus.cli run --output results/persistent \
-    --deposition-rate-kPa-per-h 0.16 --injury-duration-h 96
-```
-
-Find the critical value of any parameter:
-
-```bash
-python -m fibrofocus.cli critical \
-    --parameter deposition-rate-kPa-per-h --low 0.01 --high 0.6
-```
-
-Phase diagram over two parameters:
-
-```bash
-python -m fibrofocus.cli scan \
-    --x deposition_rate_kPa_per_h --x-range 0.02 0.30 40 \
-    --y degradation_rate_per_h   --y-range 0.001 0.02 34 \
-    --output results/phase.csv
-```
-
-Every parameter in `FocusConfig` is exposed, so the appearance of the focus and
-the density of defects are both directly controllable.
-
----
-## Which knob does what
-
-**Controls whether a focus forms and persists** (the no-return group):
+## The knobs that decide the outcome
 
 | Parameter | Meaning | IPF correlate |
 | --- | --- | --- |
-| `deposition_rate_kPa_per_h` | collagen output per myofibroblast | procollagen synthesis; the target of antifibrotics |
-| `degradation_rate_per_h` | matrix turnover | MMP/TIMP balance; resolution capacity |
-| `memory_factor`, `deactivation_rate_per_h` | hysteresis depth | mechanical memory; apoptosis resistance of the myofibroblast |
-| `injury_duration_h` | insult length | repetitive micro-injury of the alveolar epithelium |
-| `injury_provisional_E_kPa` | provisional matrix stiffness | fibrin/fibronectin clot after epithelial damage |
-| `E_act_kPa`, `activation_rate_per_h` | switch position and speed | mechanosensitivity (integrin αvβ6, YAP/TAZ, MKL1) |
+| `repair_failure_factor` | how badly AT2→AT1 is blocked | senescent/dysfunctional AT2 |
+| `injury_activation_boost` | how hard AT2 are pushed to differentiate | repetitive micro-injury |
+| `stall_promotion_strength` | how strongly profibrotic signal keeps cells KRT8+ | the K8-dependent feedback loop |
+| `repair_inhibition_strength` | how strongly it blocks the exit to AT1 | IL11, TGF-β signalling |
+| `aberrant_clearance_rate` | removal of aberrant cells | apoptosis resistance of senescent cells |
+| `aberrant_emt_rate` | conversion to mesenchyme | EMT; the input to the focus model |
 
-Cells are drawn, and counted, as ellipses with a real footprint
-(`pi/4 * length * width`). Saturation density is derived from that footprint via
-`max_packing_fraction`, so the packing fraction is a physical quantity rather
-than a free number: with a C2C12-sized cell this reproduces the ~8.2e-3 /um^2
-measured for those monolayers. Defect detection is gated on absolute packing,
-because a dilute layer has no nematic phase and any winding in it is noise.
+Mechanical knobs: `surfactant_production_per_h`, `surfactant_loss_per_h`,
+`surface_tension_min/max_mN_m`, `tissue_recoil_Pa`, `induration_time_h`,
+`collapse_damage_factor`.
 
-**Controls the nematic texture and defect density** (independent of the switch):
+## What the scans showed
 
-| Parameter | Effect |
-| --- | --- |
-| `rot_diffusion_per_h` | orientational noise; raising it shortens the correlation length and **multiplies defects** |
-| `align_rate_per_h` | nematic coupling (∼ Frank constant); raising it smooths the texture and **removes defects** |
-| `speed_um_per_h` | activity; sets the active length scale |
-| `prolif_rate_per_h`, `carrying_density_per_um2` | density, and therefore whether nematic order exists at all |
-| `rod_length_um` / `rod_width_um` | aspect ratio *and* cell footprint; sets the saturation density |
-| `max_packing_fraction` | area fraction at which growth stops |
+With the healthy baseline the lung stays healthy: aberrant fraction ~0.6 %,
+AT1 coverage ~82 %, no runaway. That stability is a requirement, not a result —
+a model whose healthy state drifts into disease is useless.
 
-Defect density scales roughly as `1/ℓ²` with `ℓ = √(K/ζ)`, so the ratio of
-`align_rate_per_h` to `rot_diffusion_per_h` is the practical dial.
+Introducing the lesion produces a proportionate response that **does not**
+become self-sustaining at baseline feedback. Progression appears only above a
+threshold in the feedback loop:
 
----
-## Parameter provenance
+| `stall_promotion_strength` | `aberrant_clearance_rate` | outcome |
+| --- | --- | --- |
+| 4 | 0.0025 – 0.0003 | stable |
+| 12 | 0.0025 – 0.0010 | stable |
+| 12 | 0.0003 | **progresses** |
+| 25 | any | **progresses** |
 
-Mechanical parameters come from measurements on spindle-shaped cell monolayers
-(Blanch-Mercader et al., *Phys. Rev. Lett.* **126**, 028101, 2021): collective
-speed ≈ 21.4 µm/h, cell density ≈ 8.2×10⁻³ µm⁻², rod-like flow alignment.
+So the epithelial point of no return is governed primarily by the strength of
+the mesenchyme→epithelium feedback, with apoptosis resistance lowering the
+threshold. This is a *separate* bistability from the matrix one in the
+fibroblastic focus model: one lives in the epithelium, one in the ECM.
 
-Stiffness thresholds follow lung mechanobiology (Hinz, *Proc. Am. Thorac. Soc.*
-**9**, 137, 2012, and work reviewed there): healthy parenchyma 0.2–2 kPa keeps
-fibroblasts quiescent; mechanical TGF-β1 activation needs roughly >5 kPa;
-myofibroblast phenotype induction and maintenance sits near 16 kPa; established
-fibrosis reaches 20–100 kPa. Fibroblasts primed on stiff substrates keep the
-phenotype for about two weeks on soft substrates — the basis for
-`memory_factor` and the slow `deactivation_rate_per_h`.
+## Caveats
 
-Focus geometry targets come from 3D morphometry (Jones et al., *JCI Insight*
-**1**, e86375, 2016): discrete, non-interconnected foci, volumes ~1.3×10⁴ to
-9.9×10⁷ µm³, 0.9–11.1 per mm³.
-
----
-## Limitations
-
-- Two-dimensional. Real foci are 3D structures sectioned obliquely in histology.
-- Collagen enters only through a scalar stiffness field; its own nematic order
-  and the reciprocal cell–matrix alignment are not resolved.
-- TGF-β is represented implicitly as a lowered activation threshold inside the
-  lesion, not as a diffusing species.
-- The epithelium is not an explicit phase, so "epithelial displacement" appears
-  as lesion growth rather than as a moving interface.
-- The reduced model ignores space entirely; use it to locate thresholds, then
-  confirm with the agent model.
-- Critical values are **model outputs, not measurements**. They are only as good
-  as the parameters above, several of which are order-of-magnitude estimates.
+- Two-dimensional. Real alveoli are 3D polyhedra sharing septa with many
+  neighbours; this is a section through that structure.
+- Alveolar collapse is treated as a discrete open/closed switch with a fixed
+  radius reduction, not a mechanical relaxation of the septal network.
+- The profibrotic signal is a single lumped field; IL11, TGF-β and the
+  macrophage compartment are not separated.
+- Mesenchymal cells released by EMT are counted but not yet placed — that is
+  the coupling to the focus model, and is the next stage.
+- The numeric thresholds above are model outputs, not measurements. Several
+  input rates are order-of-magnitude estimates, so treat the *existence* and
+  *structure* of the boundary as the result, not its exact position.
