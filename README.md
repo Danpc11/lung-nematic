@@ -1,14 +1,26 @@
 # Lung Nematic
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/lung_nematic_colab.ipynb)
+[![Analysis in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/lung_nematic_colab.ipynb)
+[![Simulation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/ipf_simulation_colab.ipynb)
 
-Nematic director fields and candidate topological defects in lung histology
-(H&E), with three orientation sources and statistical controls. It targets
-fibrotic lung, where the mechanically relevant architecture lives in the
-collagen rather than the nuclei.
+Nematic order in fibrotic lung, approached from two directions:
+
+- **`lung_nematic/`** measures director fields and candidate topological defects
+  in real H&E histology, with three orientation sources and statistical
+  controls.
+- **`simulations/`** builds the tissue from mechanism — alveolar architecture,
+  the AT2 → KRT8+ → AT1 epithelial state machine, surfactant-driven collapse,
+  breathing, and a confined mesenchyme — and asks when a lesion stops being
+  reversible.
+
+The two are meant to constrain each other: the simulation is analysed with the
+same winding criterion the histology pipeline uses, so defect densities are
+comparable once expressed in the same physical units.
 
 ---
+# Part 1 — Analysis of histology
+
 ## What it does
 
 For each image the pipeline builds a coarse-grained director field, finds
@@ -43,7 +55,6 @@ Optional analyses (all off by default, all reproducible from the config):
   spiral angle `theta0` is estimated (aster `~0`, vortex `~±90 deg`). Integer
   defects are mapped from the collagen field only.
 
----
 ## Install
 
 ```bash
@@ -62,7 +73,6 @@ Installing also registers a `lung-nematic` console command and ships a default
 configuration inside the package, so a fresh install runs without pointing at a
 config file.
 
----
 ## Usage
 
 ### Command line (batch)
@@ -142,7 +152,6 @@ rep = float(config.sigmas_px[len(config.sigmas_px) // 2])
 coloc = run_colocalization(defects, fields[rep], mask, config, representative_sigma_px=rep)
 ```
 
----
 ## Method
 
 Each nucleus (or eosin pixel) contributes a headless orientation. These are
@@ -185,11 +194,103 @@ the circular mean of `theta - phi` over an annulus (period `pi`, wrapped to
 `(-pi/2, pi/2]`): `~0` aster, `~±pi/2` vortex, in between a spiral. This is a
 pure director quantity.
 
+## Outputs
+
+Per image (filenames tagged by field, so nuclear/collagen/fused runs do not
+overwrite each other): a director-field overlay with marked candidate defects,
+per-nucleus and per-defect CSVs, raw detections, and a strict-JSON metrics
+summary (`allow_nan=False`) plus a CSV row. When enabled: a null-model histogram
+and totals, colocalization bootstrap tables, an optional diagnostic panel, and a
+`defect_maps/` folder of per-defect director maps. The batch driver also writes
+a combined `summary_metrics.csv` and a per-group aggregate.
+
 ---
-## Package layout
+# Part 2 — Simulation
+
+`simulations/` contains two models and the analysis that joins them. Each has
+its own README with the full model description, parameter provenance and
+caveats.
+
+## The alveolar model — [`simulations/alveolar/`](simulations/alveolar/README.md)
+
+Alveoli are a Voronoi tessellation of a jittered hexagonal lattice; each shared
+ridge is an interalveolar septum, cut into segments that each carry one
+epithelial state:
 
 ```text
-lung_nematic/
+empty (denuded) → AT2 → KRT8+ transitional → AT1        (repair succeeds)
+                              ↓
+                    aberrant basaloid → EMT → mesenchyme (repair fails)
+```
+
+**The lesion is a differentiation failure, not a wound.** Inside the injury
+region AT2 cells are driven to attempt differentiation while the exit to AT1 is
+suppressed. Neither on its own does anything; together they create a reservoir
+of transitional cells that can stall.
+
+Mechanics closes the loop. AT2 cells make surfactant, surfactant sets alveolar
+surface tension, and the Laplace pressure `2*gamma/r` is opposed by tissue
+recoil — so an alveolus whose AT2 population is consumed by the transitional
+state derecruits, smallest first. Collapsed alveoli suffer faster epithelial
+damage and, after long enough, become indurated: irreversibly lost. Collapse
+precedes fibrosis rather than following it.
+
+The mesenchyme is confined to the interstitium — a move into open air space is
+rejected — so a collapsed alveolus is what *provides the room* for a
+fibroblastic focus. Cells there are elongated with real excluded volume,
+experience friction that rises as they deposit collagen, and die at rates that
+differ between fibroblast and myofibroblast, which is how apoptosis resistance
+enters as a control parameter.
+
+Breathing enters as a redistributed tidal strain: the chest wall imposes a fixed
+volume, so stiff and collapsed regions deform less *because* they are stiff and
+whatever is still healthy must deform more to compensate.
+
+```python
+from simulations.alveolar import AlveolarConfig, run_and_record_coupled
+
+config = AlveolarConfig(total_time_h=17520.0, dt_h=2.0, rate_scale=0.08)
+run_and_record_coupled(config, "results/two_year", frame_every_h=292.0)
+```
+
+## The focus model — [`simulations/fibrofocus/`](simulations/fibrofocus/README.md)
+
+A standalone active-nematic model of focus formation on a flat substrate, with a
+reduced equation for lesion stiffness whose three roots locate the point of no
+return directly:
+
+```text
+E_healthy  <  E_separatrix  <  E_fibrotic
+ stable        UNSTABLE         stable
+```
+
+```python
+from simulations.fibrofocus import FocusConfig, critical_value
+
+critical_value(FocusConfig(), "deposition_rate_kPa_per_h", 0.01, 0.6)
+```
+
+## Coupling the two — [`simulations/coupled_analysis.py`](simulations/README.md)
+
+The epithelial and matrix bistabilities were first studied separately, which
+suggested breaking either loop would resolve the lesion. Coupling them shows
+otherwise: each compartment can sustain the fibrotic state through the
+cross-couplings, so cutting one self-promotion loop hands the job to the other.
+What resolves it is cutting the **link** between compartments, or restoring
+matrix turnover.
+
+## Simulation in Colab
+
+Open `ipf_simulation_colab.ipynb`. Every parameter is a form control — scenario,
+both feedback loops, breathing, cell shape and death, visualisation — and the
+notebook exports the video, the time series and the config that reproduces the
+run.
+
+---
+## Repository layout
+
+```text
+lung_nematic/            analysis of real histology
 ├── config.py            AnalysisConfig dataclass, JSON load/save, packaged default
 ├── data/                default_config.json shipped with the package
 ├── io_utils.py          image discovery, metadata, RGB reading
@@ -206,21 +307,56 @@ lung_nematic/
 ├── visualization.py     overlays and diagnostic panels
 ├── pipeline.py          single-image engine (analyze_image)
 └── batch.py             folder-level batch driver
+
+simulations/             mechanism-based models
+├── alveolar/            architecture, epithelium, breathing, mesenchyme, tracking
+│   ├── geometry.py      Voronoi alveoli, septa, epithelial segments
+│   ├── model.py         state machine, surfactant, collapse, induration
+│   ├── mesenchyme.py    confined cells, friction, death, coupled simulation
+│   ├── render.py        frames, GIF and MP4
+│   └── defect_tracking.py  defect lifetimes and the state around them
+├── fibrofocus/          standalone focus model
+│   ├── model.py         active rods on a stiffening substrate
+│   ├── bistability.py   reduced equation and the point of no return
+│   ├── render.py        frames, GIF and MP4
+│   └── cli.py           run / critical / scan subcommands
+├── coupled_analysis.py  joint bistability of both loops
+└── configs/             parameter sets that reproduce specific runs
+
+lung_nematic_colab.ipynb    analysis front-end
+ipf_simulation_colab.ipynb  simulation front-end
 ```
 
----
-## Outputs
-
-Per image (filenames tagged by field, so nuclear/collagen/fused runs do not
-overwrite each other): a director-field overlay with marked candidate defects,
-per-nucleus and per-defect CSVs, raw detections, and a strict-JSON metrics
-summary (`allow_nan=False`) plus a CSV row. When enabled: a null-model histogram
-and totals, colocalization bootstrap tables, an optional diagnostic panel, and a
-`defect_maps/` folder of per-defect director maps. The batch driver also writes
-a combined `summary_metrics.csv` and a per-group aggregate.
+The two simulation models live in separate subpackages because each defines a
+`model.py` and a `render.py`; flattening them silently overwrites files.
 
 ---
 ## Limitations
+
+### Shared: the counting-noise floor
+
+A director field estimated from discrete objects is only meaningful when enough
+of them fall inside one smoothing window. For `N` randomly oriented objects,
+counting noise alone produces an apparent order of about `1/sqrt(N)`, so a
+window needs roughly 30 samples before measured order can be distinguished from
+chance:
+
+```text
+R_min  ~  sqrt(30 * A_object / pi)
+```
+
+This was found in the simulation, where the mesenchyme sits at ~7 cells per
+window and the resulting "defects" turn out to have no persistent identity —
+92 % appear in a single frame however finely time is sampled. **It applies
+equally to histology.** Before trusting a nuclear defect map, count the nuclei
+inside one smoothing window; below ~30 the apparent order is dominated by
+counting noise. This may already be visible in the two routes behaving
+differently: a collagen director from continuous eosin intensity draws many
+effectively independent samples per window, while a nuclear director from
+sparse segmented nuclei does not. Widening the window fixes it at the cost of
+resolution, and the two cannot both be had.
+
+### Analysis
 
 - Candidate defects only; **not clinically validated**.
 - The eosin channel also stains cytoplasm and red cells, not only collagen, so
@@ -235,6 +371,25 @@ a combined `summary_metrics.csv` and a per-group aggregate.
   final densities. Two resolutions of the same tissue can give different counts,
   so cohort comparisons need a common target resolution (not yet automated).
 - Without `microns_per_pixel`, defect densities in mm^-2 are unavailable.
+
+### Simulation
+
+- Two-dimensional throughout. Real alveoli are 3D polyhedra sharing septa with
+  many neighbours; this is a section through that structure.
+- Alveolar collapse rescales a radius rather than relaxing septal mechanics, so
+  the geometry of a collapsed alveolus is schematic.
+- Breathing is quasi-static: the tidal strain *amplitude* is modelled and the
+  cycle rate enters as a multiplier. Individual breaths are never resolved.
+- Strain is distributed by a local compliance rule, not by solving elasticity,
+  so the pattern of redistribution is right but its magnitude near sharp
+  boundaries is not.
+- `rate_scale` was chosen so the disease course lands near two years. It is a
+  calibration to a clinical impression, **not a fit to data**.
+- The reduced coupled model makes EMT the only path from epithelium to
+  mesenchyme, and so probably overstates its importance.
+- Critical values reported anywhere in `simulations/` are model outputs, not
+  measurements. Treat the *existence* and *structure* of a threshold as the
+  result, not its position.
 
 ---
 ## License
