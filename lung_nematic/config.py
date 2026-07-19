@@ -35,6 +35,11 @@ class AnalysisConfig:
     detect_integer_defects: bool = False
     integer_defect_loop_radius_px: int = 30
     integer_defect_loop_points: int = 8
+    # Every ring enclosing an integer defect registers it, so raw candidates
+    # must be collapsed for a count to mean "defects". Defaults to twice the ring
+    # radius (the diameter of the disc one defect illuminates); set to 0
+    # to keep every candidate.
+    integer_min_separation_px: float = 60.0
 
     # Collagen / fused fields
     collagen_inner_scale_px: float = 1.5
@@ -108,6 +113,8 @@ class AnalysisConfig:
             raise ValueError("min_edge_distance_px must be non-negative.")
         if self.defect_cluster_radius_px <= 0:
             raise ValueError("defect_cluster_radius_px must be positive.")
+        if self.integer_min_separation_px < 0:
+            raise ValueError("integer_min_separation_px must be non-negative.")
         if self.integer_defect_loop_radius_px < 1:
             raise ValueError("integer_defect_loop_radius_px must be at least 1.")
         if self.integer_defect_loop_points < 6:
