@@ -1,4 +1,4 @@
-# Simulations / alveolar-PF
+# simulations / alveolar
 
 Stage 1+2 of the pulmonary fibrosis model: **alveolar architecture and the
 epithelial state machine**. This is the layer that was missing from the
@@ -367,3 +367,90 @@ any enrichment is stated against a null rather than in absolute terms.
 The machinery is correct and validated; it is the model's director field that
 cannot currently feed it. Re-run this analysis once cell density inside filled
 alveoli is high enough that S exceeds the noise floor for the window in use.
+
+
+---
+
+# Stage 6: giving the cells a body
+
+Three physical omissions were fixed together, because they interact.
+
+## 1. Cells now have area in the *interaction*, not only in the drawing
+
+Previously the steric repulsion used a single radius, so cells pushed each other
+like discs while merely being *drawn* as ellipses. Nematic alignment therefore
+had to be imposed by a rule instead of emerging from shape.
+
+Each cell is now resolved into `n_nodes` along its long axis; nodes repel at the
+cell width, and because a force applied at a node offset from the centre exerts
+a torque, two crossing cells rotate towards parallel on their own. Alignment is
+produced by the geometry.
+
+## 2. Friction, instead of prescribed velocities
+
+Motion is now overdamped in the proper sense — `xi * v = F` — with substrate
+friction rising as collagen accumulates:
+
+```
+xi = xi_0 * (1 + matrix_immobilization * (E - E_healthy) / (E_act - E_healthy))
+```
+
+Deposited matrix therefore pins the cells that made it, which is the physical
+statement the earlier hand-tuned "mobility" factor was standing in for.
+Rotational drag follows the same factor, so orientations freeze where the tissue
+has scarred. Measured friction rose from 1.0 to 13.9 over one simulated year.
+
+## 3. Cells die, and myofibroblasts die more slowly
+
+There was no death at all, which is why the population only ever accumulated.
+Now `fibroblast_death_rate` (0.0020 /h) and `myofibroblast_death_rate`
+(0.0004 /h) differ fivefold: **apoptosis resistance of the myofibroblast is
+represented as a rate ratio**, making it a control parameter rather than an
+assumption. A crowding term adds contact-inhibition-like death above the packing
+limit. The resident population now falls from 260 to 185 before the disease
+drives it back up, instead of rising monotonically from the first step.
+
+## What this did and did not fix
+
+Cells per coarse-graining window rose from 4 to 7. That is better, and not
+enough — and working out why gives a general rule rather than a tuning problem.
+
+A window of radius R at packing 1 holds `pi*R^2 / A_cell` cells. With a 50x11 µm
+fibroblast (`A_cell` = 432 µm²), reliable director estimation needs roughly 30
+samples, so:
+
+```
+R_min  ~  sqrt(30 * A_cell / pi)
+```
+
+which for this cell is about 64 µm. Measured against the noise floor:
+
+| window R | cells at packing 1 | noise floor \|S\| | measured S | verdict |
+| --- | --- | --- | --- | --- |
+| 28 µm | 5.7 | 0.42 | 0.29 | noise-limited |
+| 45 µm | 14.7 | 0.26 | 0.24 | noise-limited |
+| 65 µm | 30.7 | 0.18 | 0.21 | above noise |
+| 90 µm | 58.9 | 0.13 | 0.17 | above noise |
+
+The crossover sits near 60–65 µm. The alveolar radius is about 107 µm, so a
+window large enough to beat counting noise is comparable to the structure being
+measured. **The cell size sets a floor on the resolvable defect separation**,
+and for a 50 µm fibroblast in a 200 µm alveolus there is barely a decade of
+scale to work in. That is a property of the tissue, not of the code.
+
+## Consequence for the histology pipeline
+
+The same formula applies to real sections, with `A_cell` replaced by the
+footprint of whatever object supplies the orientation. Two routes behave very
+differently:
+
+- a **collagen** director from a structure tensor over continuous intensity
+  draws many effectively independent samples per window and is not
+  shot-noise limited;
+- a **nuclear** director from discrete segmented nuclei is limited by how many
+  nuclei fall inside the window.
+
+Before trusting any nuclear defect map, count the nuclei inside one smoothing
+window. If that number is below roughly 30, the apparent order is dominated by
+counting noise and the defect positions are not measuring the tissue. Widening
+the window fixes it, at the cost of resolution — and the two cannot both be had.
