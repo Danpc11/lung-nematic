@@ -9,4 +9,4 @@ define modules with the same names:
                  analysis of the point of no return
 """
 
-__all__ = ["alveolar", "fibrofocus"]
+__all__ = ["alveolar", "fibrofocus", "coupled_analysis"]
