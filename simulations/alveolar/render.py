@@ -341,4 +341,8 @@ def run_and_record_coupled(config, output_dir: str | Path,
     pd.DataFrame(records).to_csv(output_dir / "timeseries.csv", index=False)
     outputs["timeseries"] = str(output_dir / "timeseries.csv")
     outputs["final"] = records[-1]
+    # The final state is returned so callers can run diagnostics on it - cell
+    # density per coarse-graining window, focus localisation - without paying
+    # for a second identical run.
+    outputs["simulation"] = coupled
     return outputs
