@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 from scipy.ndimage import distance_transform_edt
@@ -226,7 +228,69 @@ def detect_integer_defects_single_scale(
                     }
                 )
 
-    return pd.DataFrame(candidates)
+    return _thin_integer_candidates(pd.DataFrame(candidates), config)
+
+
+def _thin_integer_candidates(
+    candidates: pd.DataFrame,
+    config: AnalysisConfig,
+) -> pd.DataFrame:
+    """Collapse redundant ring detections of the same integer defect.
+
+    Unlike the half-integer plaquette test, which fires only on the plaquette
+    containing the singularity, *every* ring that encloses an integer defect
+    registers it. Detections therefore fill a disc of the ring radius around
+    the true core, and a single +1 produces two dozen candidates at typical
+    settings - a count inflated by a factor set by grid step and ring radius
+    rather than by the tissue.
+
+    Candidates of the same sign closer than ``integer_min_separation_px`` are
+    agglomerated and replaced by their centroid, which is where the enclosed
+    defect actually sits. The separation should be about twice the ring radius,
+    since that is the diameter of the disc a single defect illuminates.
+    """
+    if candidates.empty:
+        return candidates
+
+    separation = float(config.integer_min_separation_px)
+    if separation <= 0:
+        return candidates
+
+    clustered: list[dict] = []
+    for charge_value in sorted(candidates["charge"].unique()):
+        subset = candidates.loc[candidates["charge"] == charge_value]
+        points = subset[["x_px", "y_px"]].to_numpy(dtype=float)
+        assigned = np.full(len(points), -1, dtype=int)
+        n_clusters = 0
+
+        for index in range(len(points)):
+            if assigned[index] >= 0:
+                continue
+            assigned[index] = n_clusters
+            queue = [index]
+            while queue:                       # single-link agglomeration
+                current = queue.pop()
+                distances = np.hypot(
+                    points[:, 0] - points[current, 0],
+                    points[:, 1] - points[current, 1],
+                )
+                neighbours = np.nonzero((distances < separation) & (assigned < 0))[0]
+                assigned[neighbours] = n_clusters
+                queue.extend(neighbours.tolist())
+            n_clusters += 1
+
+        for cluster in range(n_clusters):
+            members = subset.loc[assigned == cluster]
+            record = members.iloc[0].to_dict()
+            record["x_px"] = float(members["x_px"].mean())
+            record["y_px"] = float(members["y_px"].mean())
+            record["charge_raw"] = float(members["charge_raw"].mean())
+            record["n_ring_detections"] = int(len(members))
+            clustered.append(record)
+
+    if not clustered:
+        return candidates.iloc[0:0]
+    return pd.DataFrame(clustered).reset_index(drop=True)
 
 
 def single_scale_detections(
