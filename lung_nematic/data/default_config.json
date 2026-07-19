@@ -38,5 +38,6 @@
   "save_diagnostic_panel": true,
   "save_intermediate_arrays": false,
   "save_defect_maps": false,
-  "defect_map_window_px": 220
+  "defect_map_window_px": 220,
+  "integer_min_separation_px": 60.0
 }
