@@ -163,39 +163,69 @@ class MesenchymeLayer:
     def n_cells(self) -> int:
         return int(self.x.size)
 
-    def _alignment_and_steric(self):
+    def _node_positions(self):
+        """Nodes along each cell's long axis: this is what gives it area."""
+        cfg = self.cfg
+        offsets = np.linspace(-0.5, 0.5, cfg.n_nodes) * cfg.cell_length_um
+        ux, uy = np.cos(self.theta), np.sin(self.theta)
+        nx = self.x[:, None] + offsets[None, :] * ux[:, None]
+        ny = self.y[:, None] + offsets[None, :] * uy[:, None]
+        owner = np.repeat(np.arange(self.n_cells), cfg.n_nodes)
+        arm_x = (nx - self.x[:, None]).ravel()
+        arm_y = (ny - self.y[:, None]).ravel()
+        return nx.ravel(), ny.ravel(), owner, arm_x, arm_y
+
+    def _steric_and_alignment(self):
+        """Excluded-volume forces AND torques between elongated cells.
+
+        Each cell is resolved into nodes along its long axis and nodes repel at
+        the cell width. A force applied at a node that is offset from the cell
+        centre exerts a torque, so two crossing cells rotate towards being
+        parallel. Nematic alignment is therefore produced by the *shape*, not
+        imposed by a rule - which is the whole reason for giving cells an area.
+        """
         cfg = self.cfg
         n = self.n_cells
-        fx = np.zeros(n)
-        fy = np.zeros(n)
+        fx = np.zeros(n); fy = np.zeros(n); torque = np.zeros(n)
         theta_local = self.theta.copy()
         if n < 2:
-            return fx, fy, theta_local
+            return fx, fy, torque, theta_local
 
-        tree = cKDTree(np.column_stack([self.x, self.y]))
-        pairs = tree.query_pairs(cfg.cell_length_um * 0.6, output_type="ndarray")
+        node_x, node_y, owner, arm_x, arm_y = self._node_positions()
+        points = np.column_stack([node_x, node_y])
+        tree = cKDTree(points)
+        pairs = tree.query_pairs(cfg.cell_width_um, output_type="ndarray")
         if pairs.size == 0:
-            return fx, fy, theta_local
+            return fx, fy, torque, theta_local
 
         a, b = pairs[:, 0], pairs[:, 1]
-        dx = self.x[a] - self.x[b]
-        dy = self.y[a] - self.y[b]
-        dist = np.hypot(dx, dy) + 1e-9
-        overlap = np.clip(1.0 - dist / (cfg.cell_length_um * 0.6), 0.0, 1.0)
-        ux, uy = dx / dist, dy / dist
-        np.add.at(fx, a, overlap * ux)
-        np.add.at(fx, b, -overlap * ux)
-        np.add.at(fy, a, overlap * uy)
-        np.add.at(fy, b, -overlap * uy)
+        oa, ob = owner[a], owner[b]
+        keep = oa != ob
+        a, b, oa, ob = a[keep], b[keep], oa[keep], ob[keep]
+        if a.size == 0:
+            return fx, fy, torque, theta_local
 
-        qxx = np.zeros(n)
-        qxy = np.zeros(n)
+        dx = points[a, 0] - points[b, 0]
+        dy = points[a, 1] - points[b, 1]
+        dist = np.hypot(dx, dy) + 1e-9
+        overlap = np.clip(1.0 - dist / cfg.cell_width_um, 0.0, 1.0)
+        ux, uy = dx / dist, dy / dist
+        px, py = overlap * ux, overlap * uy
+
+        np.add.at(fx, oa, px);  np.add.at(fx, ob, -px)
+        np.add.at(fy, oa, py);  np.add.at(fy, ob, -py)
+        # torque = arm x force, taken about each cell's own centre
+        np.add.at(torque, oa, arm_x[a] * py - arm_y[a] * px)
+        np.add.at(torque, ob, -(arm_x[b] * py - arm_y[b] * px))
+
+        # local nematic director, for the weak co-alignment term
+        qxx = np.zeros(n); qxy = np.zeros(n)
         c2, s2 = np.cos(2 * self.theta), np.sin(2 * self.theta)
-        np.add.at(qxx, a, c2[b]); np.add.at(qxy, a, s2[b])
-        np.add.at(qxx, b, c2[a]); np.add.at(qxy, b, s2[a])
+        np.add.at(qxx, oa, c2[ob]); np.add.at(qxy, oa, s2[ob])
+        np.add.at(qxx, ob, c2[oa]); np.add.at(qxy, ob, s2[oa])
         has = (qxx**2 + qxy**2) > 1e-12
         theta_local[has] = 0.5 * np.arctan2(qxy[has], qxx[has])
-        return fx, fy, theta_local
+        return fx, fy, torque, theta_local
 
     def step(self, dt_h: float) -> None:
         cfg = self.cfg
@@ -204,7 +234,7 @@ class MesenchymeLayer:
             return
 
         mask = self.permitted_mask()
-        fx, fy, theta_local = self._alignment_and_steric()
+        fx, fy, torque, theta_local = self._steric_and_alignment()
         ix = np.clip((self.x / self.grid_step).astype(int), 0, self.nx - 1)
         iy = np.clip((self.y / self.grid_step).astype(int), 0, self.ny - 1)
 
@@ -215,23 +245,29 @@ class MesenchymeLayer:
         jx = np.clip((self.x / self.sim.grid_step_um).astype(int), 0, self.sim.nx - 1)
         jy = np.clip((self.y / self.sim.grid_step_um).astype(int), 0, self.sim.ny - 1)
 
-        # Matrix pins cells: mobility falls as local stiffness rises, so the
-        # texture freezes exactly where collagen has accumulated.
+        # Overdamped motion: xi * v = F. Substrate friction rises as collagen
+        # accumulates, so deposited matrix physically pins the cells that made
+        # it rather than mobility being reduced by hand.
         local_E = self.stiffness_kPa[iy, ix]
-        mobility = 1.0 / (
+        friction = cfg.substrate_friction * (
             1.0 + cfg.matrix_immobilization
             * np.clip((local_E - cfg.E_healthy_kPa)
                       / max(cfg.E_act_kPa - cfg.E_healthy_kPa, 1e-9), 0.0, None)
         )
-        self._last_mobility = mobility
-        speed = np.where(self.myo, cfg.speed_um_per_h * cfg.speed_myo_factor,
-                         cfg.speed_um_per_h) * mobility
-        vx = (speed * np.cos(self.theta) + cfg.repulsion_um_per_h * fx
-              + cfg.durotaxis_um2_per_kPa_h * gx_s[iy, ix]
-              + cfg.chemotaxis_um2_per_h * gx_p[jy, jx])
-        vy = (speed * np.sin(self.theta) + cfg.repulsion_um_per_h * fy
-              + cfg.durotaxis_um2_per_kPa_h * gy_s[iy, ix]
-              + cfg.chemotaxis_um2_per_h * gy_p[jy, jx])
+        self._last_friction = friction
+        self._last_mobility = cfg.substrate_friction / friction
+        propulsion = np.where(self.myo, cfg.speed_um_per_h * cfg.speed_myo_factor,
+                              cfg.speed_um_per_h) * cfg.substrate_friction
+        force_x = (propulsion * np.cos(self.theta)
+                   + cfg.steric_force_um2_per_h * fx
+                   + cfg.durotaxis_um2_per_kPa_h * gx_s[iy, ix]
+                   + cfg.chemotaxis_um2_per_h * gx_p[jy, jx])
+        force_y = (propulsion * np.sin(self.theta)
+                   + cfg.steric_force_um2_per_h * fy
+                   + cfg.durotaxis_um2_per_kPa_h * gy_s[iy, ix]
+                   + cfg.chemotaxis_um2_per_h * gy_p[jy, jx])
+        vx = force_x / friction
+        vy = force_y / friction
 
         new_x = np.clip(self.x + dt_h * vx, 0.5, cfg.width_um - 0.5)
         new_y = np.clip(self.y + dt_h * vy, 0.5, cfg.height_um - 0.5)
@@ -243,16 +279,51 @@ class MesenchymeLayer:
 
         dtheta = np.arctan2(np.sin(2 * (theta_local - self.theta)),
                             np.cos(2 * (theta_local - self.theta))) / 2.0
+        rot_friction = friction / cfg.substrate_friction
+        omega = (cfg.steric_torque_gain * torque
+                 + cfg.align_rate_per_h * dtheta) / rot_friction
         noise = self.rng.normal(0, 1.0, self.n_cells) * np.sqrt(
-            2 * cfg.rot_diffusion_per_h * mobility * dt_h
+            2 * cfg.rot_diffusion_per_h * dt_h / rot_friction
         )
-        self.theta = (
-            self.theta + dt_h * cfg.align_rate_per_h * mobility * dtheta + noise
-        ) % np.pi
+        self.theta = (self.theta + dt_h * omega + noise) % np.pi
+        self._apoptosis(dt_h)
 
         self._activate(dt_h)
         self._proliferate(dt_h, mask)
         self._update_matrix(dt_h)
+
+    def _apoptosis(self, dt_h: float) -> None:
+        """Cells die. Myofibroblasts die more slowly - that is the point.
+
+        Resistance of the myofibroblast to apoptosis is one of the defining
+        features of the fibrotic lesion: without clearance the population only
+        accumulates, which is exactly what a persistent focus looks like. The
+        ratio of the two death rates is therefore a control parameter, not a
+        detail, and crowding adds a further contact-inhibition-like term.
+        """
+        cfg = self.cfg
+        if self.n_cells == 0:
+            return
+        ix = np.clip((self.x / self.grid_step).astype(int), 0, self.nx - 1)
+        iy = np.clip((self.y / self.grid_step).astype(int), 0, self.ny - 1)
+
+        sigma = cfg.coarse_grain_um / self.grid_step
+        available = gaussian_filter(self.permitted_mask().astype(float), sigma)
+        density = self.local_density() / np.maximum(available, 0.05)
+        packing = density[iy, ix] * cfg.cell_area_um2
+        crowding = cfg.crowding_death_gain * np.clip(
+            packing - cfg.max_packing_fraction, 0.0, None
+        )
+
+        hazard = np.where(self.myo, cfg.myofibroblast_death_rate,
+                          cfg.fibroblast_death_rate) + crowding
+        survives = self.rng.random(self.n_cells) >= hazard * dt_h
+        if survives.all():
+            return
+        self.x = self.x[survives]
+        self.y = self.y[survives]
+        self.theta = self.theta[survives]
+        self.myo = self.myo[survives]
 
     def _activate(self, dt_h: float) -> None:
         """Stiffness drives myofibroblast activation; cyclic strain restrains it.
@@ -432,6 +503,7 @@ class MesenchymeLayer:
             "strain_amplification": float(
                 strain_open.mean() / max(cfg.tidal_strain, 1e-9)
             ) if strain_open.size else 0.0,
+            "mean_friction": float(np.mean(getattr(self, "_last_friction", 1.0))),
             "n_mesenchymal": self.n_cells,
             "n_myofibroblast": int(self.myo.sum()),
             "packing_in_permitted": float(packing),
