@@ -44,10 +44,19 @@ RATE_FIELDS = (
     "aberrant_emt_rate", "aberrant_clearance_rate",
     "profibrotic_decay_per_h", "surfactant_production_per_h",
     "surfactant_loss_per_h", "septal_thickening_rate_per_h",
-    "prolif_rate_per_h", "activation_rate_per_h",
-    "fibroblast_death_rate", "myofibroblast_death_rate", "crowding_death_gain",
+    "activation_rate_per_h",
     "deposition_rate_kPa_per_h", "degradation_rate_per_h",
     "overstrain_injury_gain",
+)
+# Cell-biological rates deliberately NOT scaled. Proliferation, death and
+# migration happen on their own clock (hours to weeks) regardless of how slowly
+# the disease advances; stretching them with rate_scale gave a myofibroblast a
+# 3.6-year lifetime, which is unphysical. Only matrix and disease kinetics are
+# slowed.
+UNSCALED_CELL_RATES = (
+    "prolif_rate_per_h", "fibroblast_death_rate", "myofibroblast_death_rate",
+    "crowding_death_gain", "speed_um_per_h", "rot_diffusion_per_h",
+    "align_rate_per_h",
 )
 # Fields that are intrinsic times (h): divided by rate_scale.
 TIME_FIELDS = ("induration_time_h",)
