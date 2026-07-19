@@ -168,7 +168,12 @@ def run_and_record(config: AlveolarConfig, output_dir: str | Path,
     return outputs
 
 
-def draw_coupled_frame(coupled, path: str | Path, dpi: int = 110) -> dict:
+def draw_coupled_frame(coupled, path: str | Path, dpi: int = 110,
+                       show_strain_panel: bool = True,
+                       show_defects: bool = True,
+                       stiffness_cmap: str = "pink_r",
+                       strain_cmap: str = "RdBu_r",
+                       cell_alpha: float = 0.55) -> dict:
     """Frame of the coupled model: alveoli, epithelium and mesenchyme together."""
     from matplotlib.collections import EllipseCollection
 
@@ -176,9 +181,13 @@ def draw_coupled_frame(coupled, path: str | Path, dpi: int = 110) -> dict:
     sim = coupled.epithelium
     mes = coupled.mesenchyme
     g = sim.geometry
-    figure, (axis, strain_axis) = plt.subplots(1, 2, figsize=(14.6, 7.8))
+    if show_strain_panel:
+        figure, (axis, strain_axis) = plt.subplots(1, 2, figsize=(14.6, 7.8))
+    else:
+        figure, axis = plt.subplots(figsize=(8.0, 8.4))
+        strain_axis = None
 
-    axis.imshow(mes.stiffness_kPa, origin="lower", cmap="pink_r",
+    axis.imshow(mes.stiffness_kPa, origin="lower", cmap=stiffness_cmap,
                 extent=[0, cfg.width_um, 0, cfg.height_um],
                 vmin=cfg.E_healthy_kPa, vmax=max(cfg.E_act_kPa * 2.5, 40),
                 interpolation="bilinear", zorder=0)
@@ -200,7 +209,7 @@ def draw_coupled_frame(coupled, path: str | Path, dpi: int = 110) -> dict:
             angles=np.degrees(mes.theta), units="xy",
             offsets=np.column_stack([mes.x, mes.y]),
             offset_transform=axis.transData,
-            facecolors=list(face), edgecolors="none", alpha=0.55, zorder=2,
+            facecolors=list(face), edgecolors="none", alpha=cell_alpha, zorder=2,
         ))
 
     half = 0.5 * cfg.segment_length_um
@@ -220,7 +229,7 @@ def draw_coupled_frame(coupled, path: str | Path, dpi: int = 110) -> dict:
 
     defects = mes.detect_defects()
     for key, marker, colour in (("plus", "+", "#000000"), ("minus", "x", "#7F3B08")):
-        pts = defects[key]
+        pts = defects[key] if show_defects else np.zeros((0, 2))
         if len(pts):
             axis.scatter(pts[:, 0], pts[:, 1], marker=marker, s=110,
                          linewidths=2.0, color=colour, zorder=5)
@@ -249,9 +258,12 @@ def draw_coupled_frame(coupled, path: str | Path, dpi: int = 110) -> dict:
     axis.legend(handles=handles, loc="upper right", fontsize=7, framealpha=0.92)
 
     # --- second panel: where the breath actually goes ---
+    if strain_axis is None:
+        figure.tight_layout(); figure.savefig(path, dpi=dpi); plt.close(figure)
+        return m
     strain = mes.strain
     image = strain_axis.imshow(
-        strain / cfg.tidal_strain, origin="lower", cmap="RdBu_r",
+        strain / cfg.tidal_strain, origin="lower", cmap=strain_cmap,
         extent=[0, cfg.width_um, 0, cfg.height_um],
         vmin=0.0, vmax=2.0, interpolation="bilinear",
     )
@@ -274,7 +286,14 @@ def draw_coupled_frame(coupled, path: str | Path, dpi: int = 110) -> dict:
 
 
 def run_and_record_coupled(config, output_dir: str | Path,
-                           frame_every_h: float = 24.0, fps: int = 8) -> dict:
+                           frame_every_h: float = 24.0, fps: int = 8,
+                           dpi: int = 110, show_strain_panel: bool = True,
+                           show_defects: bool = True,
+                           stiffness_cmap: str = "pink_r",
+                           strain_cmap: str = "RdBu_r",
+                           cell_alpha: float = 0.55,
+                           make_gif: bool = True, make_mp4: bool = True,
+                           progress=None) -> dict:
     """Run the coupled epithelium + mesenchyme model and assemble a movie."""
     import imageio.v2 as imageio
     import pandas as pd
@@ -294,8 +313,14 @@ def run_and_record_coupled(config, output_dir: str | Path,
 
     def snapshot() -> None:
         path = frames_dir / f"frame_{len(paths):04d}.png"
-        records.append(draw_coupled_frame(coupled, path))
+        records.append(draw_coupled_frame(
+            coupled, path, dpi=dpi, show_strain_panel=show_strain_panel,
+            show_defects=show_defects, stiffness_cmap=stiffness_cmap,
+            strain_cmap=strain_cmap, cell_alpha=cell_alpha,
+        ))
         paths.append(path)
+        if progress is not None:
+            progress(len(paths))
 
     snapshot()
     for index in range(1, n_steps + 1):
@@ -305,12 +330,14 @@ def run_and_record_coupled(config, output_dir: str | Path,
 
     images = [_even_dimensions(imageio.imread(p)) for p in paths]
     outputs = {"n_frames": len(paths)}
-    gif_path = output_dir / "coupled_simulation.gif"
-    imageio.mimsave(gif_path, images, fps=fps, loop=0)
-    outputs["gif"] = str(gif_path)
-    mp4_path = output_dir / "coupled_simulation.mp4"
-    imageio.mimsave(mp4_path, images, fps=fps, macro_block_size=None)
-    outputs["mp4"] = str(mp4_path)
+    if make_gif:
+        gif_path = output_dir / "coupled_simulation.gif"
+        imageio.mimsave(gif_path, images, fps=fps, loop=0)
+        outputs["gif"] = str(gif_path)
+    if make_mp4:
+        mp4_path = output_dir / "coupled_simulation.mp4"
+        imageio.mimsave(mp4_path, images, fps=fps, macro_block_size=None)
+        outputs["mp4"] = str(mp4_path)
     pd.DataFrame(records).to_csv(output_dir / "timeseries.csv", index=False)
     outputs["timeseries"] = str(output_dir / "timeseries.csv")
     outputs["final"] = records[-1]
