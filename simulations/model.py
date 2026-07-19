@@ -37,6 +37,39 @@ from scipy.ndimage import gaussian_filter
 
 from .geometry import AlveolarGeometry
 
+# Fields that are intrinsic kinetic rates (1/h): scaled by rate_scale.
+RATE_FIELDS = (
+    "at1_damage_rate", "at2_damage_rate", "at2_repopulation_rate",
+    "at2_activation_rate", "krt8_to_at1_rate", "krt8_to_aberrant_rate",
+    "aberrant_emt_rate", "aberrant_clearance_rate",
+    "profibrotic_decay_per_h", "surfactant_production_per_h",
+    "surfactant_loss_per_h", "septal_thickening_rate_per_h",
+    "prolif_rate_per_h", "activation_rate_per_h",
+    "deposition_rate_kPa_per_h", "degradation_rate_per_h",
+    "overstrain_injury_gain",
+)
+# Fields that are intrinsic times (h): divided by rate_scale.
+TIME_FIELDS = ("induration_time_h",)
+
+
+def apply_rate_scale(config):
+    """Return a copy of the config with intrinsic kinetics rescaled in time.
+
+    Scenario settings the user chose deliberately - total_time_h,
+    injury_duration_h, geometry, thresholds - are left untouched.
+    """
+    from dataclasses import replace as _replace
+
+    scale = config.rate_scale
+    if scale == 1.0:
+        return config
+    changes = {name: getattr(config, name) * scale for name in RATE_FIELDS}
+    changes.update({name: getattr(config, name) / scale for name in TIME_FIELDS})
+    scaled = _replace(config, **changes)
+    scaled.rate_scale = 1.0
+    return scaled
+
+
 # epithelial states
 EMPTY, AT1, AT2, KRT8, ABERRANT = 0, 1, 2, 3, 4
 STATE_NAMES = {EMPTY: "empty", AT1: "AT1", AT2: "AT2",
@@ -101,7 +134,60 @@ class AlveolarConfig:
     collapse_surfactant_penalty: float = 0.4  # closed alveoli make less surfactant
     induration_time_h: float = 240.0          # collapsed this long -> irreversible
 
+    # ---- mesenchyme (stage 3): cells confined to interstitium + collapsed space ----
+    mesenchyme_grid_step_um: float = 8.0
+    septal_thickness_um: float = 9.0          # healthy interalveolar septum
+    septal_thickening_gain: float = 3.0       # how much collagen thickens it
+    septal_thickening_rate_per_h: float = 0.01
+    n_resident_fibroblasts: int = 260
+    cell_length_um: float = 50.0
+    cell_width_um: float = 11.0
+    max_packing_fraction: float = 1.05
+    min_packing_for_nematic: float = 0.30
+    coarse_grain_um: float = 28.0
+    speed_um_per_h: float = 21.4
+    speed_myo_factor: float = 0.15
+    rot_diffusion_per_h: float = 0.80
+    align_rate_per_h: float = 1.4
+    repulsion_um_per_h: float = 60.0
+    durotaxis_um2_per_kPa_h: float = 55.0
+    # Deposited matrix physically immobilises cells: as collagen accumulates,
+    # both migration and reorientation slow down. This is the mechanism by
+    # which a nematic texture - and any defect in it - can stop being transient
+    # and become pinned. Mobility is divided by
+    # (1 + matrix_immobilization * (E - E_healthy) / (E_act - E_healthy)).
+    matrix_immobilization: float = 25.0
+    chemotaxis_um2_per_h: float = 900.0
+    prolif_rate_per_h: float = 0.022
+    E_healthy_kPa: float = 2.0
+    E_max_kPa: float = 100.0
+    E_act_kPa: float = 16.0
+    activation_width_kPa: float = 2.0
+    activation_rate_per_h: float = 0.08
+    deposition_rate_kPa_per_h: float = 0.16
+    degradation_rate_per_h: float = 0.004
+
+    # ---- breathing (quasi-static: the tidal strain AMPLITUDE is modelled,
+    # ---- not individual breaths; cycle rate enters as a rate multiplier) ----
+    tidal_strain: float = 0.10             # mean linear strain at tidal breathing
+    breaths_per_min: float = 15.0
+    strain_protection_strength: float = 6.0   # cyclic strain SUPPRESSES activation
+    strain_tgfb_gain: float = 0.8             # stretch-activated TGF-beta, x stiffness
+    overstrain_threshold: float = 0.16        # strain above which epithelium is injured
+    overstrain_injury_gain: float = 0.04      # micro-injury rate per unit excess strain
+
+    # ---- global clock ----
+    # Every intrinsic kinetic rate is multiplied by this, and intrinsic times
+    # divided by it. It stretches the timescale without touching any ratio, so
+    # the bistable structure is preserved exactly while the disease runs at a
+    # clinically plausible speed. 1.0 reproduces the fast exploratory setting.
+    rate_scale: float = 0.08
+
     seed: int = 0
+
+    @property
+    def cell_area_um2(self) -> float:
+        return float(np.pi * 0.25 * self.cell_length_um * self.cell_width_um)
 
     def validate(self) -> None:
         if self.dt_h <= 0 or self.total_time_h <= 0:
@@ -110,6 +196,12 @@ class AlveolarConfig:
             raise ValueError("repair_failure_factor must lie in [0, 1].")
         if self.surface_tension_min_mN_m >= self.surface_tension_max_mN_m:
             raise ValueError("surface tension min must be below max.")
+        if self.rate_scale <= 0:
+            raise ValueError("rate_scale must be positive.")
+        if not 0 < self.tidal_strain < 1:
+            raise ValueError("tidal_strain must lie in (0, 1).")
+        if self.overstrain_threshold <= 0:
+            raise ValueError("overstrain_threshold must be positive.")
         if self.injury_activation_boost < 0:
             raise ValueError("injury_activation_boost must be non-negative.")
         if self.aberrant_clearance_rate < 0:
@@ -118,7 +210,9 @@ class AlveolarConfig:
             raise ValueError("tissue_recoil_Pa must be positive.")
         if not 0 < self.reopening_hysteresis <= 1:
             raise ValueError("reopening_hysteresis must lie in (0, 1].")
-        for name in ("profibrotic_range_um", "induration_time_h",
+        for name in ("mesenchyme_grid_step_um", "septal_thickness_um",
+                     "cell_length_um", "cell_width_um", "coarse_grain_um",
+                     "profibrotic_range_um", "induration_time_h",
                      "alveolar_diameter_um", "segment_length_um"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive.")
@@ -132,8 +226,13 @@ class AlveolarSimulation:
 
     def __init__(self, config: AlveolarConfig):
         config.validate()
-        self.cfg = config
+        self.user_cfg = config
+        self.cfg = apply_rate_scale(config)
+        config = self.cfg
         self.rng = np.random.default_rng(config.seed)
+        # tidal strain amplitude per segment, injected by the coupled model;
+        # None means the epithelium is run without breathing.
+        self.segment_strain: np.ndarray | None = None
 
         self.geometry = AlveolarGeometry(
             width_um=config.width_um,
@@ -244,13 +343,23 @@ class AlveolarSimulation:
         draw = self.rng.random(n)
         new_state = self.state.copy()
 
+        # Breathing injures the epithelium where tidal strain runs above the
+        # tolerated threshold. Because total tidal volume is fixed, stiff and
+        # collapsed regions shed their share of the deformation onto whatever
+        # is still compliant - so the excess lands on the tissue next to the
+        # lesion, not on the lesion itself.
+        overstrain = np.zeros(n)
+        if self.segment_strain is not None:
+            excess = np.clip(self.segment_strain - cfg.overstrain_threshold, 0.0, None)
+            overstrain = cfg.overstrain_injury_gain * excess / cfg.overstrain_threshold
+
         # --- AT1 and AT2 loss (accelerated in collapsed alveoli) ---
         is_at1 = self.state == AT1
-        hazard = cfg.at1_damage_rate * damage_boost
+        hazard = cfg.at1_damage_rate * damage_boost + overstrain
         new_state[is_at1 & (draw < hazard * dt)] = EMPTY
 
         is_at2 = self.state == AT2
-        hazard = cfg.at2_damage_rate * damage_boost
+        hazard = cfg.at2_damage_rate * damage_boost + 0.5 * overstrain
         new_state[is_at2 & (draw < hazard * dt)] = EMPTY
 
         # --- denuded segments repopulated by AT2 ---
