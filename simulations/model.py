@@ -45,6 +45,7 @@ RATE_FIELDS = (
     "profibrotic_decay_per_h", "surfactant_production_per_h",
     "surfactant_loss_per_h", "septal_thickening_rate_per_h",
     "prolif_rate_per_h", "activation_rate_per_h",
+    "fibroblast_death_rate", "myofibroblast_death_rate", "crowding_death_gain",
     "deposition_rate_kPa_per_h", "degradation_rate_per_h",
     "overstrain_injury_gain",
 )
@@ -157,6 +158,15 @@ class AlveolarConfig:
     # and become pinned. Mobility is divided by
     # (1 + matrix_immobilization * (E - E_healthy) / (E_act - E_healthy)).
     matrix_immobilization: float = 25.0
+
+    # ---- rod shape, friction and death ----
+    n_nodes: int = 3                    # nodes per cell for anisotropic sterics
+    substrate_friction: float = 1.0     # xi_0; velocity = force / xi
+    steric_force_um2_per_h: float = 900.0
+    steric_torque_gain: float = 0.020   # shape-driven alignment from sterics
+    fibroblast_death_rate: float = 0.0020     # per hour
+    myofibroblast_death_rate: float = 0.0004  # apoptosis RESISTANCE: ~5x lower
+    crowding_death_gain: float = 0.004        # extra death when overpacked
     chemotaxis_um2_per_h: float = 900.0
     prolif_rate_per_h: float = 0.022
     E_healthy_kPa: float = 2.0
@@ -196,6 +206,13 @@ class AlveolarConfig:
             raise ValueError("repair_failure_factor must lie in [0, 1].")
         if self.surface_tension_min_mN_m >= self.surface_tension_max_mN_m:
             raise ValueError("surface tension min must be below max.")
+        if self.n_nodes < 2:
+            raise ValueError("n_nodes must be at least 2.")
+        if self.substrate_friction <= 0:
+            raise ValueError("substrate_friction must be positive.")
+        for name in ("fibroblast_death_rate", "myofibroblast_death_rate"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} must be non-negative.")
         if self.rate_scale <= 0:
             raise ValueError("rate_scale must be positive.")
         if not 0 < self.tidal_strain < 1:
