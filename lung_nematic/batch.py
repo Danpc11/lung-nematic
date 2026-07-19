@@ -115,6 +115,10 @@ def summarize_by_group(
         "n_defects_total",
         "n_plus_half",
         "n_minus_half",
+        # The integer layer is per-image but was not aggregated, so +/-1
+        # defects were invisible in the group summary even when detected.
+        "n_plus_one",
+        "n_minus_one",
         "net_topological_charge",
         "defect_density_mm2",
         "mean_defect_confidence",
