@@ -46,9 +46,9 @@ def load_metadata(metadata_csv: str | Path | None) -> pd.DataFrame:
             "metadata.csv must include a 'filename' or 'relative_path' column."
         )
     if has_filename:
-        metadata["filename"] = metadata["filename"].astype(str)
+        metadata["filename"] = metadata["filename"].astype("string")
     if has_relpath:
-        metadata["relative_path"] = metadata["relative_path"].astype(str)
+        metadata["relative_path"] = metadata["relative_path"].astype("string")
     return metadata
 
 
@@ -75,9 +75,14 @@ def resolve_metadata(
     }
 
     if not metadata.empty:
+        matches = metadata.iloc[0:0]
         if "relative_path" in metadata.columns and relative is not None:
             matches = metadata.loc[metadata["relative_path"] == relative]
-        else:
+        # A CSV may offer both lookup columns while leaving relative_path blank
+        # for some rows. In that case, or when no relative path matches, fall
+        # back to the documented filename lookup instead of silently discarding
+        # the row's calibration and grouping metadata.
+        if matches.empty and "filename" in metadata.columns:
             matches = metadata.loc[metadata["filename"] == path.name]
         if len(matches) > 1:
             raise ValueError(
