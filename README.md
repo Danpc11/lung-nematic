@@ -275,7 +275,7 @@ a combined `summary_metrics.csv` and a per-group aggregate.
 its own README with the full model description, parameter provenance and
 caveats.
 
-## The alveolar model — [`simulations/alveolar/`](simulations/alveolar/README.md)
+### The alveolar model — [`simulations/alveolar/`](simulations/alveolar/README.md)
 
 Alveoli are a Voronoi tessellation of a jittered hexagonal lattice; each shared
 ridge is an interalveolar septum, cut into segments that each carry one
@@ -317,7 +317,7 @@ config = AlveolarConfig(total_time_h=17520.0, dt_h=2.0, rate_scale=0.08)
 run_and_record_coupled(config, "results/two_year", frame_every_h=292.0)
 ```
 
-### The focus model — [`simulations/fibrofocus/`](simulations/fibrofocus/README.md)
+#### The focus model — [`simulations/fibrofocus/`](simulations/fibrofocus/README.md)
 
 A standalone active-nematic model of focus formation on a flat substrate, with a
 reduced equation for lesion stiffness whose three roots locate the point of no
