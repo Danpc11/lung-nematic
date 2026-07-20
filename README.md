@@ -21,9 +21,9 @@ same winding criterion the histology pipeline uses, so defect densities are
 comparable once expressed in the same physical units.
 
 ---
-# Part 1 — Analysis of histology
+## Part 1 — Analysis of histology
 
-## What it does
+### What it does
 
 For each image the pipeline builds a coarse-grained director field, finds
 half-integer (`+1/2`, `-1/2`) winding singularities that persist across
@@ -57,7 +57,7 @@ Optional analyses (all off by default, all reproducible from the config):
   spiral angle `theta0` is estimated (aster `~0`, vortex `~±90 deg`). Integer
   defects are mapped from the collagen field only.
 
-## Install
+### Install
 
 ```bash
 pip install "git+https://github.com/Danpc11/lung-nematic.git"
@@ -138,7 +138,7 @@ Selected flags (each overrides the config when given):
 The CLI, Colab and Python API use the same per-image engine. Their front ends
 only differ in how they gather inputs and combine batch-level reports.
 
-### Colab (no local setup)
+#### Colab (no local setup)
 
 Open `lung_nematic_colab.ipynb` in Google Colab. It can analyse a Drive folder
 directly or accept uploaded images and ZIP archives. ZIP and Drive inputs keep
@@ -188,7 +188,7 @@ rep = float(config.sigmas_px[len(config.sigmas_px) // 2])
 coloc = run_colocalization(defects, fields[rep], mask, config, representative_sigma_px=rep)
 ```
 
-## Method
+### Method
 
 Each nucleus (or eosin pixel) contributes a headless orientation. These are
 accumulated into a nematic tensor `Q = S (cos 2t, sin 2t)`, smoothed at several
@@ -233,7 +233,7 @@ the circular mean of `theta - phi` over an annulus (period `pi`, wrapped to
 `(-pi/2, pi/2]`): `~0` aster, `~±pi/2` vortex, in between a spiral. This is a
 pure director quantity.
 
-## Manual labelling and candidate classifier
+### Manual labelling and candidate classifier
 
 `defect_labelling_colab.ipynb` provides the complete review workflow:
 
@@ -258,7 +258,7 @@ as a third class when the labelled dataset is large enough. The meaningful
 validation result is the leave-one-image-out confusion matrix, not in-sample
 accuracy.
 
-## Outputs
+### Outputs
 
 Per image (filenames tagged by field, so nuclear/collagen/fused runs do not
 overwrite each other): a director-field overlay with marked candidate defects,
@@ -269,7 +269,7 @@ and totals, colocalization bootstrap tables, an optional diagnostic panel, and a
 a combined `summary_metrics.csv` and a per-group aggregate.
 
 ---
-# Part 2 — Simulation
+## Part 2 — Simulation
 
 `simulations/` contains two models and the analysis that joins them. Each has
 its own README with the full model description, parameter provenance and
@@ -317,7 +317,7 @@ config = AlveolarConfig(total_time_h=17520.0, dt_h=2.0, rate_scale=0.08)
 run_and_record_coupled(config, "results/two_year", frame_every_h=292.0)
 ```
 
-## The focus model — [`simulations/fibrofocus/`](simulations/fibrofocus/README.md)
+### The focus model — [`simulations/fibrofocus/`](simulations/fibrofocus/README.md)
 
 A standalone active-nematic model of focus formation on a flat substrate, with a
 reduced equation for lesion stiffness whose three roots locate the point of no
@@ -334,7 +334,7 @@ from simulations.fibrofocus import FocusConfig, critical_value
 critical_value(FocusConfig(), "deposition_rate_kPa_per_h", 0.01, 0.6)
 ```
 
-## Coupling the two — [`simulations/coupled_analysis.py`](simulations/README.md)
+### Coupling the two — [`simulations/coupled_analysis.py`](simulations/README.md)
 
 The epithelial and matrix bistabilities were first studied separately, which
 suggested breaking either loop would resolve the lesion. Coupling them shows
@@ -343,7 +343,7 @@ cross-couplings, so cutting one self-promotion loop hands the job to the other.
 What resolves it is cutting the **link** between compartments, or restoring
 matrix turnover.
 
-## Simulation in Colab
+### Simulation in Colab
 
 Open `ipf_simulation_colab.ipynb`. Form controls cover the scenario, both
 feedback loops, breathing, cell shape and death, director coarse-graining, and
@@ -362,7 +362,7 @@ matrix because that representation cannot distinguish preventing new
 crosslinks from reversing mature scar.
 
 ---
-## Repository layout
+### Repository layout
 
 ```text
 lung_nematic/            analysis of real histology
@@ -411,9 +411,9 @@ The two simulation models live in separate subpackages because each defines a
 `model.py` and a `render.py`; flattening them silently overwrites files.
 
 ---
-## Limitations
+### Limitations
 
-### Shared: the counting-noise floor
+#### Shared: the counting-noise floor
 
 A director field estimated from discrete objects is only meaningful when enough
 of them fall inside one smoothing window. For `N` randomly oriented objects,
@@ -436,7 +436,7 @@ effectively independent samples per window, while a nuclear director from
 sparse segmented nuclei does not. Widening the window fixes it at the cost of
 resolution, and the two cannot both be had.
 
-### Analysis
+#### Analysis
 
 - Candidate defects only; **not clinically validated**.
 - The eosin channel also stains cytoplasm and red cells, not only collagen, so
@@ -455,7 +455,7 @@ resolution, and the two cannot both be had.
   so cohort comparisons need a common target resolution (not yet automated).
 - Without `microns_per_pixel`, defect densities in mm^-2 are unavailable.
 
-### Simulation
+#### Simulation
 
 - Two-dimensional throughout. Real alveoli are 3D polyhedra sharing septa with
   many neighbours; this is a section through that structure.
@@ -477,6 +477,6 @@ resolution, and the two cannot both be had.
   they do not continue from the final spatial configuration of the agent run.
 
 ---
-## License
+### License
 
 See [`LICENSE`](LICENSE).
