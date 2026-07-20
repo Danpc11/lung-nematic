@@ -275,7 +275,7 @@ a combined `summary_metrics.csv` and a per-group aggregate.
 its own README with the full model description, parameter provenance and
 caveats.
 
-### The alveolar model — [`simulations/alveolar/`](simulations/alveolar/README.md)
+#### The alveolar model — [`simulations/alveolar/`](simulations/alveolar/README.md)
 
 Alveoli are a Voronoi tessellation of a jittered hexagonal lattice; each shared
 ridge is an interalveolar septum, cut into segments that each carry one
@@ -334,7 +334,7 @@ from simulations.fibrofocus import FocusConfig, critical_value
 critical_value(FocusConfig(), "deposition_rate_kPa_per_h", 0.01, 0.6)
 ```
 
-### Coupling the two — [`simulations/coupled_analysis.py`](simulations/README.md)
+#### Coupling the two — [`simulations/coupled_analysis.py`](simulations/README.md)
 
 The epithelial and matrix bistabilities were first studied separately, which
 suggested breaking either loop would resolve the lesion. Coupling them shows
