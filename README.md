@@ -361,6 +361,15 @@ start and end times. Delayed dosing is not offered through the legacy lumped
 matrix because that representation cannot distinguish preventing new
 crosslinks from reversing mature scar.
 
+For the focus model on its own, open `fibrofocus_colab.ipynb`. It locates the
+bistable **point of no return** — the separatrix stiffness above which a lesion
+sustains itself after the insult is withdrawn — bisects for the critical value
+of any single parameter, and maps a two-parameter phase diagram of where lesions
+persist. Its defect cell tests every candidate against a counting-noise null
+sized from the local cell density (see `simulations/nematic_resolution.py`), so
+apparent defects that are indistinguishable from randomly oriented cells are
+rejected rather than reported.
+
 ---
 ### Repository layout
 
@@ -400,11 +409,14 @@ simulations/             mechanism-based models
 │   ├── render.py        frames, GIF and MP4
 │   └── cli.py           run / critical / scan subcommands
 ├── coupled_analysis.py  joint bistability of both loops
+├── pharmacology.py      retrospective drug controls vs the clinical record
+├── nematic_resolution.py  adaptive window + per-window counting-noise null
 └── configs/             parameter sets that reproduce specific runs
 
-lung_nematic_colab.ipynb    analysis front-end
+lung_nematic_colab.ipynb    histology analysis front-end
 defect_labelling_colab.ipynb interactive labelling and classifier training
-ipf_simulation_colab.ipynb  simulation front-end
+ipf_simulation_colab.ipynb  alveolar (coupled) simulation front-end
+fibrofocus_colab.ipynb      focus model: separatrix, phase diagram, defects
 ```
 
 The two simulation models live in separate subpackages because each defines a
@@ -433,8 +445,17 @@ inside one smoothing window; below ~30 the apparent order is dominated by
 counting noise. This may already be visible in the two routes behaving
 differently: a collagen director from continuous eosin intensity draws many
 effectively independent samples per window, while a nuclear director from
-sparse segmented nuclei does not. Widening the window fixes it at the cost of
-resolution, and the two cannot both be had.
+sparse segmented nuclei does not.
+
+`simulations/nematic_resolution.py` turns this rule of thumb into a test:
+instead of one global threshold, each window is compared against the null
+distribution of `|S|` **for its own local sample count**, so a sparse window
+must show much stronger apparent order than a dense one to be kept. It also
+shows why restricting the analysis to a dense focus interior does *not* rescue
+resolution — a focus is already near maximal packing, so `R_min` is a floor set
+by cell size, not tissue density. The window can only be widened past `R_min` at
+the cost of being unable to separate defect pairs closer than about `2 * R_min`;
+the two cannot both be had.
 
 #### Analysis
 
