@@ -235,6 +235,18 @@ def draw_frame(sim: FocusSimulation, path: str | Path,
     return counts
 
 
+def _even_dimensions(image: np.ndarray) -> np.ndarray:
+    """Trim to even width and height; H.264 rejects odd frame sizes.
+
+    Latent until a domain size or dpi happens to produce an odd dimension, at
+    which point ffmpeg fails with a broken pipe rather than anything legible.
+    Only the mp4 encoder is affected, but the trim is applied to every frame so
+    the gif and mp4 stay identical.
+    """
+    height, width = image.shape[:2]
+    return image[: height - (height % 2), : width - (width % 2)]
+
+
 def run_and_record(config: FocusConfig, output_dir: str | Path,
                    frame_every_h: float = 4.0, fps: int = 12,
                    make_gif: bool = True, make_mp4: bool = True,
@@ -268,7 +280,7 @@ def run_and_record(config: FocusConfig, output_dir: str | Path,
         if step_index % every == 0:
             snapshot()
 
-    images = [imageio.imread(p) for p in frame_paths]
+    images = [_even_dimensions(imageio.imread(p)) for p in frame_paths]
     outputs: dict[str, str] = {}
     if make_gif:
         gif_path = output_dir / "focus_simulation.gif"
