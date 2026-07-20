@@ -31,6 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
+import pandas as pd
 from scipy.ndimage import (
     binary_closing, binary_fill_holes, gaussian_filter, uniform_filter,
 )
@@ -177,7 +178,6 @@ def analyze_phase_contrast(
     # scale while the config demands persistence across two silently rejects
     # everything, so persistence is handled here rather than left to a single
     # detect call.
-    import pandas as _pd
     fields_by_scale: dict[float, dict] = {}
     per_scale: list = []
     for sigma in config.sigmas_px:
@@ -189,7 +189,7 @@ def analyze_phase_contrast(
         if not detections.empty:
             detections["sigma_px"] = float(sigma)
             per_scale.append(detections)
-    raw = _pd.concat(per_scale, ignore_index=True) if per_scale else _pd.DataFrame()
+    raw = pd.concat(per_scale, ignore_index=True) if per_scale else pd.DataFrame()
     defects = cluster_multiscale_defects(raw, len(config.sigmas_px), config)
     field = fields_by_scale[representative_sigma_px] if representative_sigma_px in fields_by_scale \
         else phase_contrast_field(image, representative_sigma_px, mask=coverage)
@@ -372,7 +372,7 @@ def analyze_gel_series(
     config: AnalysisConfig,
     output_dir=None,
     draw_fields: bool = True,
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     """Analyze a stiffness series of phase-contrast frames into one table.
 
     ``image_paths`` maps a stiffness in kPa to an image path (or a list of
