@@ -1,7 +1,9 @@
 # Lung Nematic
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+[![Tests](https://github.com/Danpc11/lung-nematic/actions/workflows/tests.yml/badge.svg)](https://github.com/Danpc11/lung-nematic/actions/workflows/tests.yml)
 [![Analysis in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/lung_nematic_colab.ipynb)
+[![Labelling in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/defect_labelling_colab.ipynb)
 [![Simulation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/ipf_simulation_colab.ipynb)
 
 Nematic order in fibrotic lung, approached from two directions:
@@ -69,9 +71,15 @@ cd lung-nematic
 pip install -e .
 ```
 
-Installing also registers a `lung-nematic` console command and ships a default
-configuration inside the package, so a fresh install runs without pointing at a
-config file.
+Installing also registers a `lung-nematic` console command, ships the default
+analysis configuration, and installs both `lung_nematic` and `simulations`.
+Simulation video export additionally needs:
+
+```bash
+pip install imageio imageio-ffmpeg seaborn
+```
+
+The Colab simulation notebook installs those runtime extras automatically.
 
 ## Usage
 
@@ -88,6 +96,27 @@ optional `--metadata` CSV (see `metadata_template.csv`) supplies
 `microns_per_pixel` and grouping, and matches rows by `filename` or
 `relative_path`; a missing metadata path is an error rather than silently
 ignored, and duplicate `image_id`s are rejected before processing.
+
+For a flat image folder, `filename` is sufficient:
+
+```csv
+filename,image_id,group,microns_per_pixel
+control_01.jpg,C01,control,0.45
+fibrosis_01.jpg,F01,fibrosis,0.45
+```
+
+For recursive folders or repeated filenames, use `relative_path` and give every
+image a unique `image_id`:
+
+```csv
+relative_path,image_id,group,microns_per_pixel
+control/field_01.tif,C01,control,0.45
+fibrosis/field_01.tif,F01,fibrosis,0.45
+```
+
+When both lookup columns exist, `relative_path` is attempted first and
+`filename` is used as a fallback for rows whose relative path is blank or does
+not match.
 
 Selected flags (each overrides the config when given):
 
@@ -106,15 +135,22 @@ Selected flags (each overrides the config when given):
 | `--seed` | Seed for all stochastic controls |
 | `--config`, `--metadata`, `--stop-on-error` | Config, metadata, error policy |
 
-The full CLI is the same engine as Colab and the Python API; the three cannot
-disagree.
+The CLI, Colab and Python API use the same per-image engine. Their front ends
+only differ in how they gather inputs and combine batch-level reports.
 
 ### Colab (no local setup)
 
-Open `lung_nematic_colab.ipynb` in Google Colab. The code is hidden; you upload
-images (or load them from Drive), pick the field and the analyses with form
-controls, run, and download the results. The notebook is a thin front-end over
-`analyze_folder`, so it produces the same outputs a command-line run would.
+Open `lung_nematic_colab.ipynb` in Google Colab. It can analyse a Drive folder
+directly or accept uploaded images and ZIP archives. ZIP and Drive inputs keep
+their recursive directory layout, so folders such as `control/` and
+`fibrosis/` remain distinct biological groups. A metadata CSV may be uploaded
+or selected by path.
+
+The notebook can run one or all orientation fields. It consolidates successes
+and failures across fields into `summary_metrics.csv` and
+`processing_errors.csv`, writes a combined `group_summary.csv`, and also writes
+one group summary per field. `clear_previous_results=True` prevents stale files
+from an earlier parameter set entering the downloaded ZIP.
 
 ### Python
 
@@ -161,7 +197,10 @@ scales `sigmas_px`, and reduced to a director angle `theta` and local order `S`.
 **Half-integer defects.** Candidates are grid plaquettes whose director winds by
 `±pi` (`±1/2` charge); a candidate is kept only if it persists across at least
 `min_scales_for_persistence` scales and lies inside dense tissue away from the
-edge.
+edge. Same-charge detections closer than `defect_cluster_radius_px` are grouped
+across scales with DBSCAN and replaced by one centroid. Consequently, one final
+marker normally represents one multiscale candidate rather than one raw grid
+hit; `scales_detected` records the supporting scales.
 
 **Integer defects (opt-in).** A `±1` defect makes the director wind by `2*pi`,
 i.e. the doubled phase `2*theta` winds by `4*pi`. On a 4-corner plaquette each
@@ -193,6 +232,31 @@ detector applies — so controls and defects share the same geometry.
 the circular mean of `theta - phi` over an annulus (period `pi`, wrapped to
 `(-pi/2, pi/2]`): `~0` aster, `~±pi/2` vortex, in between a spiral. This is a
 pure director quantity.
+
+## Manual labelling and candidate classifier
+
+`defect_labelling_colab.ipynb` provides the complete review workflow:
+
+1. load histology or phase-contrast images from persistent Drive storage;
+2. detect candidates and label them `real`, `uncertain` or `artefact` in an
+   interactive director map;
+3. restore and extend labels from earlier sessions;
+4. re-extract features from each image's real director field;
+5. validate by leaving out whole images, never individual candidates;
+6. train and export a random-forest or logistic classifier with its validation
+   report and feature importances.
+
+A broad core can occasionally survive the normal multiscale clustering as two
+nearby final markers. The notebook reports possible same-charge duplicates and
+offers an optional second merge before labelling. Merging is off by default:
+two nearby cores may be physically distinct, and an adjacent `+1/2`/`-1/2` pair
+must never be merged. A merged candidate records `merged_marker_count`.
+
+By default, `uncertain` examples are held out of training and scored afterwards
+against the cleaner real/artefact boundary. The notebook can instead train them
+as a third class when the labelled dataset is large enough. The meaningful
+validation result is the leave-one-image-out confusion matrix, not in-sample
+accuracy.
 
 ## Outputs
 
@@ -281,10 +345,21 @@ matrix turnover.
 
 ## Simulation in Colab
 
-Open `ipf_simulation_colab.ipynb`. Every parameter is a form control — scenario,
-both feedback loops, breathing, cell shape and death, visualisation — and the
-notebook exports the video, the time series and the config that reproduces the
-run.
+Open `ipf_simulation_colab.ipynb`. Form controls cover the scenario, both
+feedback loops, breathing, cell shape and death, director coarse-graining, and
+visualisation. Results from an earlier execution are cleared by default.
+
+The notebook exports the current run's video, time series, figures,
+`config.json`, diagnostics and `run_manifest.json`; the manifest records the
+exact Git commit and runtime. Its diagnostics compare measured nematic order
+with the counting-noise floor and report enrichment of mesenchymal cells in
+collapsed alveoli.
+
+Retrospective drug controls use the **reduced matrix-maturation model**, not the
+spatial agent state. Prevention and established-disease treatment have explicit
+start and end times. Delayed dosing is not offered through the legacy lumped
+matrix because that representation cannot distinguish preventing new
+crosslinks from reversing mature scar.
 
 ---
 ## Repository layout
@@ -303,6 +378,10 @@ lung_nematic/            analysis of real histology
 ├── null_model.py        permutation null (nuclear and collagen)
 ├── colocalization.py    defect core/annulus vs local-order bootstrap test
 ├── defect_maps.py       per-defect director maps + spiral angle
+├── defect_features.py   features extracted around labelled candidates
+├── defect_classifier.py grouped validation, training and model persistence
+├── labeling.py          interactive real/uncertain/artefact labelling widget
+├── phase_contrast.py    director fields and stiffness-series analysis for gels
 ├── metrics.py           per-image summary metrics
 ├── visualization.py     overlays and diagnostic panels
 ├── pipeline.py          single-image engine (analyze_image)
@@ -324,6 +403,7 @@ simulations/             mechanism-based models
 └── configs/             parameter sets that reproduce specific runs
 
 lung_nematic_colab.ipynb    analysis front-end
+defect_labelling_colab.ipynb interactive labelling and classifier training
 ipf_simulation_colab.ipynb  simulation front-end
 ```
 
@@ -365,6 +445,9 @@ resolution, and the two cannot both be had.
   the null model and colocalization, not on its own.
 - Integer (`±1`) defects are rare and unstable in a director field (a `+1` tends
   to split into two `+1/2`); the ring layer reports total enclosed winding.
+- Spatial clustering is an operational definition, not proof of physical
+  identity. When manually merging two same-charge markers, inspect whether they
+  share one disordered core and document the chosen radius.
 - Defect maps show the **director** coloured by order `S`, not velocity or flow;
   fixed H&E has no time-resolved motion.
 - Detection is defined in **pixels**; `microns_per_pixel` is applied only to
@@ -390,6 +473,8 @@ resolution, and the two cannot both be had.
 - Critical values reported anywhere in `simulations/` are model outputs, not
   measurements. Treat the *existence* and *structure* of a threshold as the
   result, not its position.
+- Drug controls in the Colab notebook are a separate reduced-model protocol;
+  they do not continue from the final spatial configuration of the agent run.
 
 ---
 ## License
