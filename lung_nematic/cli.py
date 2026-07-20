@@ -41,6 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--null-mode", choices=("shuffle", "uniform"),
                         default=None)
     parser.add_argument("--null-downsample", type=int, default=None)
+    parser.add_argument(
+        "--null-n-jobs", type=int, default=None,
+        help="Null-model worker threads; use -1 for all detected CPU cores.",
+    )
     parser.add_argument("--n-bootstrap", type=int, default=None)
     parser.add_argument("--collagen-inner-scale", type=float, default=None)
     parser.add_argument("--mask-normalized-smoothing",
@@ -68,6 +72,7 @@ def _apply_overrides(config, args):
         "n_permutations": args.n_permutations,
         "null_mode": args.null_mode,
         "null_downsample": args.null_downsample,
+        "null_n_jobs": args.null_n_jobs,
         "n_bootstrap": args.n_bootstrap,
         "collagen_inner_scale_px": args.collagen_inner_scale,
         "mask_normalized_smoothing": args.mask_normalized_smoothing,
