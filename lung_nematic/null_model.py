@@ -25,8 +25,11 @@ factors trade fidelity for speed.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+import os
 from pathlib import Path
+from typing import Callable, Iterable
 
 import numpy as np
 import pandas as pd
@@ -34,6 +37,28 @@ from scipy.ndimage import gaussian_filter
 
 from .config import AnalysisConfig
 from .defects import cluster_multiscale_defects, detect_defects_single_scale
+
+
+def _parallel_counts(
+    worker: Callable[[np.uint64], int],
+    seeds: Iterable[np.uint64],
+    n_tasks: int,
+    n_jobs: int,
+) -> tuple[np.ndarray, int]:
+    """Run deterministic permutation workers with shared-memory threads.
+
+    SciPy's Gaussian filters dominate this workload and release the GIL. Threads
+    therefore parallelize the expensive part while sharing the large prepared
+    image arrays instead of copying them into child processes.
+    """
+    if n_jobs == 0 or n_jobs < -1:
+        raise ValueError("n_jobs must be -1 (all CPU cores) or a positive integer.")
+    requested = (os.cpu_count() or 1) if n_jobs == -1 else n_jobs
+    workers = max(1, min(int(requested), int(n_tasks)))
+    if workers == 1:
+        return np.fromiter((worker(seed) for seed in seeds), dtype=int), workers
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="lung-null") as pool:
+        return np.fromiter(pool.map(worker, seeds), dtype=int), workers
 
 
 def _prepare(
@@ -150,6 +175,7 @@ def run_null_model(
     downsample: int = 2,
     mode: str = "shuffle",
     seed: int = 0,
+    n_jobs: int = 1,
 ) -> dict:
     """
     Permutation test for the ``+/-1/2`` defect count of one image.
@@ -170,6 +196,10 @@ def run_null_model(
         fresh angles on ``[0, pi)`` (also destroys the marginal).
     seed:
         Seed for the permutation RNG (reproducibility).
+    n_jobs:
+        Number of shared-memory worker threads. ``1`` is serial and ``-1`` uses
+        all detected CPU cores. Results are identical for a given seed regardless
+        of worker count.
 
     Returns
     -------
@@ -181,6 +211,8 @@ def run_null_model(
         raise ValueError("mode must be 'shuffle' or 'uniform'.")
     if n_permutations < 1:
         raise ValueError("n_permutations must be at least 1.")
+    if n_jobs == 0 or n_jobs < -1:
+        raise ValueError("n_jobs must be -1 (all CPU cores) or a positive integer.")
 
     keys = [
         "n_oriented_nuclei",
@@ -188,6 +220,8 @@ def run_null_model(
         "null_mode",
         "null_downsample",
         "null_seed",
+        "null_n_jobs",
+        "null_workers_used",
         "observed_total",
         "observed_plus_half",
         "observed_minus_half",
@@ -212,6 +246,8 @@ def run_null_model(
             null_mode=mode,
             null_downsample=int(max(1, downsample)),
             null_seed=seed,
+            null_n_jobs=int(n_jobs),
+            null_workers_used=0,
             observed_total=0,
             observed_plus_half=0,
             observed_minus_half=0,
@@ -227,14 +263,21 @@ def run_null_model(
         theta_observed, prepared
     )
 
-    rng = np.random.default_rng(seed)
-    null_totals = np.empty(n_permutations, dtype=int)
-    for index in range(n_permutations):
+    permutation_seeds = np.random.SeedSequence(seed).generate_state(
+        n_permutations, dtype=np.uint64
+    )
+
+    def count_permutation(permutation_seed: np.uint64) -> int:
+        rng = np.random.default_rng(permutation_seed)
         if mode == "shuffle":
             theta = rng.permutation(theta_observed)
         else:
             theta = rng.uniform(0.0, np.pi, size=theta_observed.shape)
-        null_totals[index] = _count_defects(theta, prepared)[0]
+        return _count_defects(theta, prepared)[0]
+
+    null_totals, workers_used = _parallel_counts(
+        count_permutation, permutation_seeds, n_permutations, n_jobs
+    )
 
     null_mean = float(null_totals.mean())
     null_std = float(null_totals.std(ddof=1)) if n_permutations > 1 else 0.0
@@ -271,6 +314,8 @@ def run_null_model(
         "null_mode": mode,
         "null_downsample": prepared["factor"],
         "null_seed": seed,
+        "null_n_jobs": int(n_jobs),
+        "null_workers_used": workers_used,
         "observed_total": observed_total,
         "observed_plus_half": observed_plus,
         "observed_minus_half": observed_minus,
@@ -423,6 +468,7 @@ def run_collagen_null_model(
     downsample: int = 3,
     inner_scale_px: float = 1.5,
     seed: int = 0,
+    n_jobs: int = 1,
 ) -> dict:
     """
     Permutation null for the collagen (structure-tensor) defect count.
@@ -434,10 +480,13 @@ def run_collagen_null_model(
     Detection is identical to the collagen pipeline, and both the observed
     statistic and every permutation run through the same (down-sampled) path.
 
-    Returns the same keys as ``run_null_model`` plus ``null_totals``.
+    ``n_jobs`` has the same deterministic shared-memory semantics as
+    ``run_null_model``. Returns the same keys plus ``null_totals``.
     """
     if n_permutations < 1:
         raise ValueError("n_permutations must be at least 1.")
+    if n_jobs == 0 or n_jobs < -1:
+        raise ValueError("n_jobs must be -1 (all CPU cores) or a positive integer.")
 
     prepared = _prepare_collagen(
         eosin, tissue_mask, config, downsample, inner_scale_px
@@ -451,15 +500,22 @@ def run_collagen_null_model(
 
     values_x = gx[tys, txs]
     values_y = gy[tys, txs]
-    rng = np.random.default_rng(seed)
-    null_totals = np.empty(n_permutations, dtype=int)
-    for index in range(n_permutations):
+    permutation_seeds = np.random.SeedSequence(seed).generate_state(
+        n_permutations, dtype=np.uint64
+    )
+
+    def count_permutation(permutation_seed: np.uint64) -> int:
+        rng = np.random.default_rng(permutation_seed)
         order = rng.permutation(values_x.size)
         gx_perm = gx.copy()
         gy_perm = gy.copy()
         gx_perm[tys, txs] = values_x[order]
         gy_perm[tys, txs] = values_y[order]
-        null_totals[index] = _count_collagen_defects(gx_perm, gy_perm, prepared)[0]
+        return _count_collagen_defects(gx_perm, gy_perm, prepared)[0]
+
+    null_totals, workers_used = _parallel_counts(
+        count_permutation, permutation_seeds, n_permutations, n_jobs
+    )
 
     null_mean = float(null_totals.mean())
     null_std = float(null_totals.std(ddof=1)) if n_permutations > 1 else 0.0
@@ -493,6 +549,8 @@ def run_collagen_null_model(
         "null_mode": "gradient_shuffle",
         "null_downsample": prepared["factor"],
         "null_seed": seed,
+        "null_n_jobs": int(n_jobs),
+        "null_workers_used": workers_used,
         "observed_total": observed_total,
         "observed_plus_half": observed_plus,
         "observed_minus_half": observed_minus,
