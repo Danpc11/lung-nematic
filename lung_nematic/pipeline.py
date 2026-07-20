@@ -238,6 +238,7 @@ def _run_null(
             n_permutations=config.n_permutations,
             downsample=config.null_downsample,
             mode=config.null_mode, seed=config.random_seed,
+            n_jobs=config.null_n_jobs,
         )
     else:
         result = run_collagen_null_model(
@@ -246,6 +247,7 @@ def _run_null(
             downsample=config.null_downsample,
             inner_scale_px=config.collagen_inner_scale_px,
             seed=config.random_seed,
+            n_jobs=config.null_n_jobs,
         )
 
     save_null_histogram(
