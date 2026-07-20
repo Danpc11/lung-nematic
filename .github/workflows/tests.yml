@@ -30,8 +30,8 @@ jobs:
         run: pytest -q
 
   imports:
-    # A package-structure break is invisible until something imports it, and
-    # simulations/ holds two subpackages that define modules of the same name.
+    # Build and install the real distribution, then leave the checkout before
+    # importing. An editable install can hide packages omitted from the wheel.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,10 +41,12 @@ jobs:
           cache: pip
       - run: |
           python -m pip install --upgrade pip
-          pip install -e .
-          pip install matplotlib imageio imageio-ffmpeg
-      - name: Import every entry point
+          pip install build
+          python -m build --wheel
+          pip install dist/*.whl
+      - name: Import every packaged entry point
         run: |
+          cd "$(mktemp -d)"
           python -c "import lung_nematic"
           python -c "import lung_nematic.synthetic"
           python -c "import simulations.alveolar"
