@@ -275,8 +275,12 @@ class FocusSimulation:
             range=[[0, cfg.height_um], [0, cfg.width_um]],
         )
         cell_area = cfg.grid_step_um ** 2
+        # Periodic domain: cells wrap, so the field must wrap too. The default
+        # reflect mode double-counts edge cells and inflates apparent density
+        # and order near the boundary.
         return gaussian_filter(hist / cell_area,
-                               cfg.collagen_smoothing_um / cfg.grid_step_um)
+                               cfg.collagen_smoothing_um / cfg.grid_step_um,
+                               mode="wrap")
 
     def _myo_density(self) -> np.ndarray:
         cfg = self.cfg
@@ -289,7 +293,8 @@ class FocusSimulation:
         )
         cell_area = cfg.grid_step_um ** 2
         return gaussian_filter(hist / cell_area,
-                               cfg.collagen_smoothing_um / cfg.grid_step_um)
+                               cfg.collagen_smoothing_um / cfg.grid_step_um,
+                               mode="wrap")
 
     # ------------------------------------------------------------ biology
     def _update_phenotype(self) -> None:
@@ -451,9 +456,10 @@ class FocusSimulation:
         np.add.at(counts, (iy, ix), 1.0)
 
         s = sigma_um / cfg.grid_step_um
-        qxx = gaussian_filter(qxx, s)
-        qxy = gaussian_filter(qxy, s)
-        density = gaussian_filter(counts, s)
+        # Periodic domain -> wrap. See _cell_density for why reflect is wrong.
+        qxx = gaussian_filter(qxx, s, mode="wrap")
+        qxy = gaussian_filter(qxy, s, mode="wrap")
+        density = gaussian_filter(counts, s, mode="wrap")
 
         with np.errstate(invalid="ignore", divide="ignore"):
             order = np.sqrt(qxx**2 + qxy**2) / np.maximum(density, 1e-9)
