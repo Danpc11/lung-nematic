@@ -165,9 +165,8 @@ def analyze_phase_contrast(
     caller can draw the director (see ``lung_nematic.visualization``) without
     recomputing anything.
     """
-    gray = to_grayscale(image)
     coverage = cell_texture_mask(image, quantile=coverage_quantile)
-    mask = coverage_envelope(coverage)   # sheet boundary for edge distance
+    sheet_mask = coverage_envelope(coverage)  # boundary used for edge distance
 
     sigmas = list(config.sigmas_px)
     if representative_sigma_px is None:
@@ -186,37 +185,41 @@ def analyze_phase_contrast(
         # gate on coverage, but let defects live anywhere inside the sheet
         scale_field = dict(scale_field)
         fields_by_scale[float(sigma)] = scale_field
-        detections = single_scale_detections(scale_field, mask, config)
+        detections = single_scale_detections(scale_field, sheet_mask, config)
         if not detections.empty:
             detections["sigma_px"] = float(sigma)
             per_scale.append(detections)
     raw = _pd.concat(per_scale, ignore_index=True) if per_scale else _pd.DataFrame()
     defects = cluster_multiscale_defects(raw, len(config.sigmas_px), config)
     field = fields_by_scale[representative_sigma_px] if representative_sigma_px in fields_by_scale \
-        else phase_contrast_field(image, representative_sigma_px, mask=mask)
+        else phase_contrast_field(image, representative_sigma_px, mask=coverage)
 
-    order_in_cells = field["order"][mask]
+    # Scientific summary metrics must describe detected cell texture, not the
+    # filled sheet envelope. The latter intentionally bridges internal gaps and
+    # is useful only for edge-distance gating and overlay geometry.
+    order_in_cells = field["order"][coverage]
     global_S = float(np.sqrt(
-        np.mean(np.cos(2 * field["theta"][mask])) ** 2
-        + np.mean(np.sin(2 * field["theta"][mask])) ** 2
-    )) if mask.any() else float("nan")
+        np.mean(np.cos(2 * field["theta"][coverage])) ** 2
+        + np.mean(np.sin(2 * field["theta"][coverage])) ** 2
+    )) if coverage.any() else float("nan")
 
     n_plus = int((defects["charge"] == 0.5).sum()) if not defects.empty else 0
     n_minus = int((defects["charge"] == -0.5).sum()) if not defects.empty else 0
 
     return {
         "field": field,
-        "mask": mask,
+        "mask": sheet_mask,
+        "coverage_mask": coverage,
         "defects": defects,
         "global_nematic_order_S": global_S,
         "local_S_median": float(np.median(order_in_cells)) if order_in_cells.size else float("nan"),
         "local_S_mean": float(np.mean(order_in_cells)) if order_in_cells.size else float("nan"),
-        "coverage_fraction": float(mask.mean()),
+        "coverage_fraction": float(coverage.mean()),
         "n_plus_half": n_plus,
         "n_minus_half": n_minus,
         "n_defects_total": n_plus + n_minus,
         "net_topological_charge": 0.5 * (n_plus - n_minus),
-        "correlation_length_px": orientation_correlation_length(field, mask),
+        "correlation_length_px": orientation_correlation_length(field, coverage),
         "representative_sigma_px": representative_sigma_px,
     }
 
@@ -395,7 +398,7 @@ def analyze_gel_series(
             rgb = read_rgb(str(path))
             result = analyze_phase_contrast(rgb, config)
             row = {k: v for k, v in result.items()
-                   if k not in ("field", "mask", "defects")}
+                   if k not in ("field", "mask", "coverage_mask", "defects")}
             row["stiffness_kPa"] = float(stiffness_kPa)
             row["path"] = str(path)
             row["replicate"] = index
