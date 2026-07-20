@@ -94,11 +94,12 @@ def analyze_folder(
         output_dir / "summary_metrics.csv",
         index=False,
     )
+    errors_path = output_dir / "processing_errors.csv"
     if not errors_df.empty:
-        errors_df.to_csv(
-            output_dir / "processing_errors.csv",
-            index=False,
-        )
+        errors_df.to_csv(errors_path, index=False)
+    elif errors_path.exists():
+        # Do not leave failures from an earlier run beside a clean new summary.
+        errors_path.unlink()
 
     return summary_df, errors_df
 
