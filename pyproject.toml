@@ -24,7 +24,9 @@ lung-nematic = "lung_nematic.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["lung_nematic*"]
+include = ["lung_nematic*", "simulations*"]
 
 [tool.setuptools.package-data]
 lung_nematic = ["data/*.json"]
+simulations = ["configs/*.json"]
+
