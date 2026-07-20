@@ -30,6 +30,7 @@
   "n_permutations": 199,
   "null_mode": "shuffle",
   "null_downsample": 2,
+  "null_n_jobs": 1,
   "n_bootstrap": 2000,
   "colocalization_annulus_inner_frac": 1.0,
   "colocalization_annulus_outer_frac": 2.0,
