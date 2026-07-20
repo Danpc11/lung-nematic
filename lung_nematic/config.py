@@ -54,6 +54,7 @@ class AnalysisConfig:
     n_permutations: int = 199
     null_mode: str = "shuffle"
     null_downsample: int = 2
+    null_n_jobs: int = 1
 
     # Colocalization
     n_bootstrap: int = 2000
@@ -137,6 +138,10 @@ class AnalysisConfig:
         for name in ("n_permutations", "n_bootstrap", "null_downsample"):
             if getattr(self, name) < 1:
                 raise ValueError(f"{name} must be at least 1.")
+        if self.null_n_jobs == 0 or self.null_n_jobs < -1:
+            raise ValueError(
+                "null_n_jobs must be -1 (all CPU cores) or a positive integer."
+            )
 
         # Colocalization annulus.
         if self.colocalization_annulus_inner_frac < 0:
