@@ -297,4 +297,8 @@ def run_and_record(config: FocusConfig, output_dir: str | Path,
     outputs["timeseries"] = str(output_dir / "timeseries.csv")
     outputs["n_frames"] = len(frame_paths)
     outputs["final"] = records[-1]
+    # Return the final simulation so callers can analyse defects, density and
+    # localisation without paying for a second identical run. The fibrofocus
+    # notebook otherwise rebuilds a FocusSimulation and repeats every step.
+    outputs["simulation"] = sim
     return outputs
