@@ -9,7 +9,7 @@ All notable changes to this project are documented here. The format follows
 ## [0.2.0]
 
 Adaptive-radius defect detection, cell and nucleus morphometry, and a set of
-correctness fixes to the analysis and simulation code. Tabular outputs are now
+correctness fixes to the analysis and simulation code. New tabular outputs are
 written as TSV.
 
 ### Added
@@ -84,7 +84,9 @@ written as TSV.
 
 ### Changed
 
-- Tabular outputs are TSV rather than CSV throughout.
+- New tabular outputs (morphometry, the adaptive-defect notebook cell) are
+  written as TSV. The older pipeline, batch, labelling and simulation exports
+  still emit CSV; migrating them is tracked for a later release.
 - Default director-field scale for histology moved toward the OrientationJ
   regime (integration `sigma ~ 20`, grid `~ 18`), which resolves the domain
   structure a large window had averaged away.
