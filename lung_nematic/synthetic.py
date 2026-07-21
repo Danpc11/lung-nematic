@@ -24,7 +24,6 @@ internal check: it measures when the integer ring detector reports a genuine
 
 from __future__ import annotations
 
-from dataclasses import replace
 
 import numpy as np
 import pandas as pd
