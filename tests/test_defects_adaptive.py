@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from lung_nematic.config import load_default_config
 from lung_nematic.defects_adaptive import (
@@ -275,3 +276,34 @@ def test_adaptive_null_parallel_matches_serial():
     )
     assert np.array_equal(serial["null_counts"], parallel["null_counts"])
     assert serial["p_depletion"] == parallel["p_depletion"]
+
+
+def test_null_model_rejects_zero_permutations():
+    """The public API must reject n_permutations < 1, like the main null model."""
+    from lung_nematic.defects_adaptive import adaptive_null_model
+
+    shape = (100, 100)
+    field = {"theta": np.zeros(shape), "order": np.full(shape, 0.5),
+             "density": np.ones(shape)}
+    with pytest.raises(ValueError):
+        adaptive_null_model(
+            field, np.ones(shape, bool), np.full(shape, 20.0),
+            _config(), n_permutations=0, grid_step_px=15,
+        )
+
+
+def test_context_and_null_serialise_to_strict_json():
+    """NaN from empty defects / undefined z must serialise as null, not NaN."""
+    import json
+    from lung_nematic.io_utils import json_safe
+    from lung_nematic.defects_adaptive import defect_order_context
+
+    shape = (100, 100)
+    field = {"theta": np.zeros(shape), "order": np.ones(shape), "density": np.ones(shape)}
+    # empty defects -> NaN-bearing context
+    context = defect_order_context(pd.DataFrame(), field, np.ones(shape, bool))
+    payload = {"context": context, "z_score": float("nan")}
+    # strict JSON must not raise once sanitised
+    text = json.dumps(json_safe(payload), allow_nan=False)
+    assert "NaN" not in text
+    assert "null" in text
