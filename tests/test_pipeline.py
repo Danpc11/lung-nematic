@@ -13,7 +13,7 @@ from lung_nematic.collagen_field import (
     compute_collagen_field,
     detect_multiscale_collagen_defects,
 )
-from lung_nematic.colocalization import eligible_plaquette_centers, run_colocalization
+from lung_nematic.colocalization import eligible_plaquette_centers
 from lung_nematic.config import AnalysisConfig, load_default_config
 from lung_nematic.defects import detect_defects_single_scale
 from lung_nematic.fused_field import compute_fused_field
@@ -139,6 +139,64 @@ def test_null_model_reproducibility():
     a = run_null_model(nuclei, mask, config, n_permutations=6, downsample=2, seed=7)
     b = run_null_model(nuclei, mask, config, n_permutations=6, downsample=2, seed=7)
     assert np.array_equal(a["null_totals"], b["null_totals"])
+
+
+def test_null_model_parallel_matches_serial():
+    """The parallel path must be bit-for-bit identical to the serial one.
+
+    A permutation null whose p-value shifts with ``n_jobs`` is a silent bug.
+    Determinism comes from one fixed seed per permutation, so this compares
+    n_jobs=1 against n_jobs=2 and asserts identical null distributions.
+    """
+    rng = np.random.default_rng(1)
+    nuclei = pd.DataFrame({
+        "x_px": rng.integers(5, 195, 300).astype(float),
+        "y_px": rng.integers(5, 195, 300).astype(float),
+        "theta_rad": rng.uniform(0, np.pi, 300),
+        "anisotropy_weight": rng.uniform(0.2, 1.0, 300),
+    })
+    mask = _mask((200, 200))
+    config = _detect_config()
+
+    serial = run_null_model(nuclei, mask, config, n_permutations=12,
+                            downsample=2, seed=7, n_jobs=1)
+    parallel = run_null_model(nuclei, mask, config, n_permutations=12,
+                              downsample=2, seed=7, n_jobs=2)
+    assert np.array_equal(serial["null_totals"], parallel["null_totals"])
+    assert serial["p_two_sided"] == parallel["p_two_sided"]
+    assert parallel["null_workers_used"] >= 1
+
+
+def test_collagen_null_model_parallel_matches_serial():
+    """The collagen route shares the executor, so it must be deterministic too."""
+    from lung_nematic.null_model import run_collagen_null_model
+
+    rng = np.random.default_rng(2)
+    eosin = rng.uniform(0.1, 1.0, (120, 120))
+    mask = _mask((120, 120))
+    config = _detect_config()
+
+    serial = run_collagen_null_model(eosin, mask, config, n_permutations=12,
+                                     downsample=2, seed=5, n_jobs=1)
+    parallel = run_collagen_null_model(eosin, mask, config, n_permutations=12,
+                                       downsample=2, seed=5, n_jobs=2)
+    assert np.array_equal(serial["null_totals"], parallel["null_totals"])
+
+
+@pytest.mark.parametrize("bad", [0, -2, -5])
+def test_null_model_rejects_invalid_n_jobs(bad):
+    rng = np.random.default_rng(1)
+    nuclei = pd.DataFrame({
+        "x_px": rng.integers(5, 195, 50).astype(float),
+        "y_px": rng.integers(5, 195, 50).astype(float),
+        "theta_rad": rng.uniform(0, np.pi, 50),
+        "anisotropy_weight": rng.uniform(0.2, 1.0, 50),
+    })
+    mask = _mask((200, 200))
+    config = _detect_config()
+    with pytest.raises(ValueError):
+        run_null_model(nuclei, mask, config, n_permutations=4,
+                       downsample=2, seed=7, n_jobs=bad)
 
 
 def test_colocalization_same_valid_gate():
