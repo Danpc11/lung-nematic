@@ -500,6 +500,10 @@ the two cannot both be had.
   they do not continue from the final spatial configuration of the agent run.
 
 ---
+### Citation
+
+See [`CITATION.cff`](CITATION.cff).
+
 ### License
 
 See [`LICENSE`](LICENSE).
