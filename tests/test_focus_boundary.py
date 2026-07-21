@@ -23,6 +23,7 @@ import pytest
 from scipy.ndimage import gaussian_filter
 
 from simulations.fibrofocus import FocusConfig, FocusSimulation
+from simulations.nematic_resolution import director_field, resolved_defects
 
 
 # --------------------------------------------------------------- the mechanism
@@ -147,4 +148,99 @@ def test_planted_half_defect_is_representable(charge):
     assert core < surround, (
         f"a planted {charge:+.1f} defect should have a disordered core; "
         f"core {core:.2f} vs surround {surround:.2f}"
+    )
+
+
+# ---------------------------------- the analysis module used by the notebook
+# fibrofocus_colab.ipynb decides where order is "significant" through
+# simulations.nematic_resolution, not through FocusSimulation.director_field.
+# That module smooths its own fields and must wrap for the same reason.
+
+
+def _resolution_corner_fp(mode: str, n_trials: int = 100,
+                          width: float = 300.0, grid: float = 5.0,
+                          sigma: float = 15.0, n_cells: int = 600) -> float:
+    """Corner false-positive rate for nematic_resolution.director_field."""
+    centre_vals, corner_vals = [], []
+    for trial in range(n_trials):
+        rng = np.random.default_rng(trial)
+        x = rng.uniform(0, width, n_cells)
+        y = rng.uniform(0, width, n_cells)
+        theta = rng.uniform(0, np.pi, n_cells)
+        field = director_field(x, y, theta, (width, width), grid, sigma,
+                               boundary_mode=mode)
+        order = field["order"]
+        ny, nx = order.shape
+        centre_vals.append(order[ny // 2 - 2:ny // 2 + 2, nx // 2 - 2:nx // 2 + 2].mean())
+        corner_vals.append(order[:3, :3].mean())
+    threshold = np.quantile(centre_vals, 0.95)
+    return float((np.array(corner_vals) > threshold).mean())
+
+
+def test_resolution_module_defaults_to_wrap():
+    """Both entry points must default to the periodic boundary."""
+    import inspect
+    assert inspect.signature(director_field).parameters["boundary_mode"].default == "wrap"
+    assert inspect.signature(resolved_defects).parameters["boundary_mode"].default == "wrap"
+
+
+def test_resolution_reflect_inflates_corners_but_wrap_does_not():
+    """The same boundary bug, in the module the notebook actually calls."""
+    reflect_fp = _resolution_corner_fp("reflect")
+    wrap_fp = _resolution_corner_fp("wrap")
+    assert reflect_fp > 0.15, (
+        f"reflect should inflate corner false positives; got {reflect_fp:.2f}"
+    )
+    assert wrap_fp < 0.10, (
+        f"wrap should keep corner false positives near nominal; got {wrap_fp:.2f}"
+    )
+
+
+def test_resolution_field_has_no_corner_bias_with_random_orientations():
+    """Averaged over seeds, the wrapped field must not be corner-biased.
+
+    A single realisation is dominated by counting noise (few cells per window),
+    so the corner/centre ratio is only meaningful in the mean. Under reflect the
+    mean corner order sits well above the centre; under wrap they match.
+    """
+    width = 300.0
+    n = 800
+    corner_ratios = []
+    for seed in range(40):
+        rng = np.random.default_rng(seed)
+        x = rng.uniform(0, width, n)
+        y = rng.uniform(0, width, n)
+        theta = rng.uniform(0, np.pi, n)
+        field = director_field(x, y, theta, (width, width), 5.0, 15.0)  # default wrap
+        order = field["order"]
+        ny, nx = order.shape
+        corner = np.mean([
+            order[:3, :3].mean(), order[:3, -3:].mean(),
+            order[-3:, :3].mean(), order[-3:, -3:].mean(),
+        ])
+        centre = order[ny // 2 - 2:ny // 2 + 2, nx // 2 - 2:nx // 2 + 2].mean()
+        corner_ratios.append(corner / max(centre, 1e-9))
+    mean_ratio = float(np.mean(corner_ratios))
+    assert 0.75 < mean_ratio < 1.3, (
+        f"mean corner/centre order should be ~1 with wrap; got {mean_ratio:.2f}"
+    )
+
+
+def test_resolution_controls_aligned_and_random():
+    """Sanity on the significance test: aligned passes, random is rejected."""
+    rng = np.random.default_rng(1)
+    width = 300.0
+    n = 800
+    x = rng.uniform(0, width, n)
+    y = rng.uniform(0, width, n)
+    cell_area = 432.0
+
+    aligned = resolved_defects(x, y, np.full(n, 0.6), (width, width), cell_area)
+    random = resolved_defects(x, y, rng.uniform(0, np.pi, n), (width, width), cell_area)
+
+    assert aligned["diagnostics"]["significant_area_fraction"] > 0.5, (
+        "a coherently aligned field should be almost entirely significant"
+    )
+    assert random["diagnostics"]["significant_area_fraction"] < 0.2, (
+        "a randomly oriented field should be almost entirely rejected"
     )
