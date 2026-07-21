@@ -1,246 +1,271 @@
 """
-Boundary conditions and defect detection in the periodic focus model.
+Deciding when a measured nematic order is real.
 
-The focus model moves cells on a periodic domain (``np.mod`` wrap, minimum-image
-interactions), so every coarse-grained field must be smoothed with
-``mode="wrap"``. The default reflect mode double-counts edge cells and
-manufactures order in the corners: with fully random orientations and a nominal
-5 % threshold, the corner false-positive rate runs to tens of percent under
-reflect and drops to the nominal level under wrap.
+A director field built from discrete objects carries counting noise. For N
+randomly oriented rods the resultant of the doubled angles has magnitude of
+order 1/sqrt(N) purely by chance, so a small smoothing window reports order
+where there is none. The usual response - "use at least 30 samples per window" -
+is a serviceable rule of thumb but it is not a test, and it hides the fact that
+the achievable window size is fixed by the objects themselves.
 
-These tests pin that down at two levels: the raw ``gaussian_filter`` behaviour
-that motivated the fix, and the assembled director field the model actually
-produces. The planted ±1/2 tests confirm the field is still able to represent a
-real defect once the boundary is correct.
+That constraint is worth stating plainly. A window of radius R holds
+``pi * R^2 * phi / A_cell`` objects at packing fraction ``phi``, and packing
+cannot exceed about 1. So
+
+    R_min = sqrt(N_min * A_cell / (pi * phi))
+
+is a floor set by cell size, not by tissue density: for a 50 x 11 um fibroblast
+at full packing and N_min = 30, R_min is about 64 um whatever the sample. There
+is no denser region to retreat to. Either the window is widened past R_min - at
+the cost of being unable to resolve defect pairs closer than roughly 2R - or the
+measurement is abandoned.
+
+What this module adds is the test the rule of thumb stands in for. For each
+window the local sample count is measured, the null distribution of |S| at that
+count is evaluated, and order is reported only where it exceeds the null
+quantile *for its own N*. Sparse windows are then held to a stricter standard
+than dense ones, automatically, instead of every window being judged against a
+single global threshold.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
+from functools import lru_cache
 
 import numpy as np
-import pytest
 from scipy.ndimage import gaussian_filter
 
-from simulations.fibrofocus import FocusConfig, FocusSimulation
-from simulations.nematic_resolution import director_field, resolved_defects
 
+@lru_cache(maxsize=512)
+def null_order_quantile(
+    n_samples: int,
+    quantile: float = 0.95,
+    n_trials: int = 20000,
+    seed: int = 0,
+) -> float:
+    """Order parameter reached by chance alone, for ``n_samples`` random rods.
 
-# --------------------------------------------------------------- the mechanism
-def _corner_false_positive_rate(mode: str, n_trials: int = 120,
-                                nx: int = 60, ny: int = 60,
-                                n_cells: int = 600, sigma: float = 3.0) -> float:
-    """FP rate in the corner against a 5 % threshold from the centre.
-
-    Fully random orientations have zero true order, so any apparent order is a
-    boundary artifact of the smoothing mode.
+    Monte Carlo rather than analytic, because the Rayleigh approximation is only
+    good for large N and the interesting windows are small.
     """
-    def order_map(seed: int) -> np.ndarray:
-        rng = np.random.default_rng(seed)
-        x = rng.uniform(0, nx, n_cells)
-        y = rng.uniform(0, ny, n_cells)
-        theta = rng.uniform(0, np.pi, n_cells)
-        qxx = np.zeros((ny, nx))
-        qxy = np.zeros((ny, nx))
-        counts = np.zeros((ny, nx))
-        ix = np.clip(x.astype(int), 0, nx - 1)
-        iy = np.clip(y.astype(int), 0, ny - 1)
+    if n_samples < 1:
+        return 1.0
+    rng = np.random.default_rng(seed)
+    angles = rng.uniform(0.0, np.pi, size=(n_trials, n_samples))
+    cos_sum = np.cos(2 * angles).sum(axis=1)
+    sin_sum = np.sin(2 * angles).sum(axis=1)
+    magnitudes = np.hypot(cos_sum, sin_sum) / n_samples
+    return float(np.quantile(magnitudes, quantile))
+
+
+def analytic_null_quantile(n_samples: int, quantile: float = 0.95) -> float:
+    """Rayleigh approximation, for orientation and for checking the sampler."""
+    if n_samples < 1:
+        return 1.0
+    return float(np.sqrt(-np.log(1.0 - quantile) / n_samples))
+
+
+def minimum_window_radius_um(
+    cell_area_um2: float,
+    min_samples: int = 30,
+    packing_fraction: float = 1.0,
+) -> float:
+    """Smallest window that can hold ``min_samples`` objects at this packing."""
+    packing = max(float(packing_fraction), 1e-6)
+    return float(np.sqrt(min_samples * cell_area_um2 / (np.pi * packing)))
+
+
+def adaptive_window_radius_um(
+    density_per_um2: float,
+    min_samples: int = 30,
+    floor_um: float = 5.0,
+) -> float:
+    """Window radius that captures ``min_samples`` at the measured density."""
+    density = max(float(density_per_um2), 1e-12)
+    return float(max(np.sqrt(min_samples / (np.pi * density)), floor_um))
+
+
+def director_field(
+    x: np.ndarray,
+    y: np.ndarray,
+    theta: np.ndarray,
+    shape_um: tuple[float, float],
+    grid_step_um: float,
+    sigma_um: float,
+    boundary_mode: str = "wrap",
+) -> dict[str, np.ndarray]:
+    """Coarse-grained director, order, and the *count* behind each estimate.
+
+    ``boundary_mode`` is the smoothing boundary condition. It defaults to
+    ``"wrap"`` because the focus model this module analyses runs on a periodic
+    domain; the default ``"reflect"`` double-counts edge objects and inflates
+    apparent order in the corners (tens of percent false positives against a
+    5 % threshold). Pass ``"reflect"`` only for a genuinely bounded field.
+    """
+    width_um, height_um = shape_um
+    nx = max(int(np.ceil(width_um / grid_step_um)), 1)
+    ny = max(int(np.ceil(height_um / grid_step_um)), 1)
+
+    qxx = np.zeros((ny, nx))
+    qxy = np.zeros((ny, nx))
+    counts = np.zeros((ny, nx))
+    if x.size:
+        ix = np.clip((x / grid_step_um).astype(int), 0, nx - 1)
+        iy = np.clip((y / grid_step_um).astype(int), 0, ny - 1)
         np.add.at(qxx, (iy, ix), np.cos(2 * theta))
         np.add.at(qxy, (iy, ix), np.sin(2 * theta))
         np.add.at(counts, (iy, ix), 1.0)
-        qxx = gaussian_filter(qxx, sigma, mode=mode)
-        qxy = gaussian_filter(qxy, sigma, mode=mode)
-        density = gaussian_filter(counts, sigma, mode=mode)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            order = np.sqrt(qxx**2 + qxy**2) / np.maximum(density, 1e-9)
-        return np.clip(np.nan_to_num(order), 0, 1)
 
-    centre_vals, corner_vals = [], []
-    for trial in range(n_trials):
-        order = order_map(trial)
-        centre_vals.append(order[ny // 2 - 2:ny // 2 + 2, nx // 2 - 2:nx // 2 + 2].mean())
-        corner_vals.append(order[:3, :3].mean())
-    threshold = np.quantile(centre_vals, 0.95)
-    return float((np.array(corner_vals) > threshold).mean())
+    sigma = sigma_um / grid_step_um
+    qxx_s = gaussian_filter(qxx, sigma, mode=boundary_mode)
+    qxy_s = gaussian_filter(qxy, sigma, mode=boundary_mode)
+    counts_s = gaussian_filter(counts, sigma, mode=boundary_mode)
 
+    # Effective number of objects contributing to each smoothed estimate. A
+    # Gaussian of width sigma integrates to 2*pi*sigma^2 in area, so the count
+    # per unit area must be scaled back up to a count.
+    effective_n = counts_s * 2.0 * np.pi * sigma**2
 
-def test_reflect_inflates_corners_but_wrap_does_not():
-    """The bug and its fix, quantified: reflect fails, wrap is at nominal."""
-    reflect_fp = _corner_false_positive_rate("reflect")
-    wrap_fp = _corner_false_positive_rate("wrap")
-    assert reflect_fp > 0.15, (
-        f"reflect should inflate corner false positives; got {reflect_fp:.2f}"
-    )
-    assert wrap_fp < 0.10, (
-        f"wrap should keep corner false positives near nominal; got {wrap_fp:.2f}"
-    )
+    with np.errstate(invalid="ignore", divide="ignore"):
+        order = np.sqrt(qxx_s**2 + qxy_s**2) / np.maximum(counts_s, 1e-12)
+
+    return {
+        "theta": np.mod(0.5 * np.arctan2(qxy_s, qxx_s), np.pi),
+        "order": np.clip(np.nan_to_num(order), 0.0, 1.0),
+        "effective_n": effective_n,
+        "density": counts_s / grid_step_um**2,
+        "sigma_um": sigma_um,
+        "grid_step_um": grid_step_um,
+    }
 
 
-# -------------------------------------------------- the assembled model field
-def test_focus_field_has_no_corner_bias_with_random_orientations():
-    """The model's own director field must not be brighter in the corners."""
-    config = replace(FocusConfig(), total_time_h=2.0)
-    sim = FocusSimulation(config)
-    sim.theta = sim.rng.uniform(0, np.pi, sim.n_cells)
+def significant_order_mask(
+    field: dict[str, np.ndarray],
+    quantile: float = 0.95,
+    max_lookup_n: int = 400,
+) -> np.ndarray:
+    """Where does the measured order exceed the null *for its own sample count*?
 
-    field = sim.director_field(sigma_um=25.0)
-    order = field["order"]
-    ny, nx = order.shape
-
-    corner = np.mean([
-        order[:3, :3].mean(), order[:3, -3:].mean(),
-        order[-3:, :3].mean(), order[-3:, -3:].mean(),
-    ])
-    centre = order[ny // 2 - 2:ny // 2 + 2, nx // 2 - 2:nx // 2 + 2].mean()
-    ratio = corner / max(centre, 1e-9)
-    assert 0.7 < ratio < 1.4, (
-        f"corner order should match the centre on a periodic field; ratio {ratio:.2f}"
-    )
-
-
-def test_density_field_wraps():
-    """A cell at the edge must contribute to the density on the opposite edge."""
-    config = replace(FocusConfig(), total_time_h=2.0)
-    sim = FocusSimulation(config)
-    # place every cell in a thin strip at the left edge
-    sim.x = sim.rng.uniform(0, 2.0, sim.n_cells)
-    sim.y = sim.rng.uniform(0, config.height_um, sim.n_cells)
-
-    field = sim.director_field(sigma_um=15.0)
-    density = field["density"]
-    # with wrap, smoothing a left-edge strip leaks onto the right edge
-    left = density[:, :3].sum()
-    right = density[:, -3:].sum()
-    assert right > 0.05 * left, (
-        "density from an edge strip should wrap onto the opposite edge"
-    )
-
-
-# ------------------------------------------------------ planted ±1/2 defects
-def _plant_defect(sim: FocusSimulation, x0: float, y0: float, charge: float):
-    """Set every cell's orientation to the far field of a defect at (x0, y0)."""
-    dx = sim.x - x0
-    dy = sim.y - y0
-    sim.theta = np.mod(charge * np.arctan2(dy, dx), np.pi)
-
-
-@pytest.mark.parametrize("charge", [0.5, -0.5])
-def test_planted_half_defect_is_representable(charge):
-    """A planted ±1/2 must produce a low-order core in an otherwise ordered field.
-
-    This is not a detector test; it checks the corrected field can still carry a
-    real defect - order dips at the singularity and recovers around it - rather
-    than being flattened by the boundary handling.
+    Each window is compared against the distribution its own N implies, so a
+    sparse window must show much stronger apparent order than a dense one to
+    count. This is the test the "30 samples" rule approximates.
     """
-    config = replace(FocusConfig(), total_time_h=2.0)
-    sim = FocusSimulation(config)
-    x0, y0 = config.width_um / 2, config.height_um / 2
-    _plant_defect(sim, x0, y0, charge)
-
-    field = sim.director_field(sigma_um=20.0)
+    effective_n = field["effective_n"]
     order = field["order"]
-    ny, nx = order.shape
-    ix = int(x0 / config.grid_step_um)
-    iy = int(y0 / config.grid_step_um)
 
-    core = order[iy - 1:iy + 2, ix - 1:ix + 2].mean()
-    surround = order[iy - 6:iy + 7, ix - 6:ix + 7].mean()
-    assert core < surround, (
-        f"a planted {charge:+.1f} defect should have a disordered core; "
-        f"core {core:.2f} vs surround {surround:.2f}"
-    )
+    counts = np.clip(np.rint(effective_n).astype(int), 0, max_lookup_n)
+    thresholds = np.ones_like(order)
+    for value in np.unique(counts):
+        if value < 2:
+            continue
+        thresholds[counts == value] = null_order_quantile(int(value), quantile)
+    return (order > thresholds) & (counts >= 2)
 
 
-# ---------------------------------- the analysis module used by the notebook
-# fibrofocus_colab.ipynb decides where order is "significant" through
-# simulations.nematic_resolution, not through FocusSimulation.director_field.
-# That module smooths its own fields and must wrap for the same reason.
+def resolved_defects(
+    x: np.ndarray,
+    y: np.ndarray,
+    theta: np.ndarray,
+    shape_um: tuple[float, float],
+    cell_area_um2: float,
+    grid_step_um: float = 6.0,
+    min_samples: int = 30,
+    quantile: float = 0.95,
+    sigma_um: float | None = None,
+    plaquette_step: int = 2,
+    min_separation_um: float | None = None,
+    boundary_mode: str = "wrap",
+) -> dict:
+    """Detect +/-1/2 defects only where the local order beats its own null.
 
+    When ``sigma_um`` is None the window is chosen from the measured density so
+    that a typical window holds ``min_samples`` objects. The returned
+    diagnostics state the resulting resolution limit, because widening the
+    window to defeat noise necessarily blurs defect pairs closer than about
+    twice its radius - the two cannot both be had.
 
-def _resolution_corner_fp(mode: str, n_trials: int = 100,
-                          width: float = 300.0, grid: float = 5.0,
-                          sigma: float = 15.0, n_cells: int = 600) -> float:
-    """Corner false-positive rate for nematic_resolution.director_field."""
-    centre_vals, corner_vals = [], []
-    for trial in range(n_trials):
-        rng = np.random.default_rng(trial)
-        x = rng.uniform(0, width, n_cells)
-        y = rng.uniform(0, width, n_cells)
-        theta = rng.uniform(0, np.pi, n_cells)
-        field = director_field(x, y, theta, (width, width), grid, sigma,
-                               boundary_mode=mode)
-        order = field["order"]
-        ny, nx = order.shape
-        centre_vals.append(order[ny // 2 - 2:ny // 2 + 2, nx // 2 - 2:nx // 2 + 2].mean())
-        corner_vals.append(order[:3, :3].mean())
-    threshold = np.quantile(centre_vals, 0.95)
-    return float((np.array(corner_vals) > threshold).mean())
-
-
-def test_resolution_module_defaults_to_wrap():
-    """Both entry points must default to the periodic boundary."""
-    import inspect
-    assert inspect.signature(director_field).parameters["boundary_mode"].default == "wrap"
-    assert inspect.signature(resolved_defects).parameters["boundary_mode"].default == "wrap"
-
-
-def test_resolution_reflect_inflates_corners_but_wrap_does_not():
-    """The same boundary bug, in the module the notebook actually calls."""
-    reflect_fp = _resolution_corner_fp("reflect")
-    wrap_fp = _resolution_corner_fp("wrap")
-    assert reflect_fp > 0.15, (
-        f"reflect should inflate corner false positives; got {reflect_fp:.2f}"
-    )
-    assert wrap_fp < 0.10, (
-        f"wrap should keep corner false positives near nominal; got {wrap_fp:.2f}"
-    )
-
-
-def test_resolution_field_has_no_corner_bias_with_random_orientations():
-    """Averaged over seeds, the wrapped field must not be corner-biased.
-
-    A single realisation is dominated by counting noise (few cells per window),
-    so the corner/centre ratio is only meaningful in the mean. Under reflect the
-    mean corner order sits well above the centre; under wrap they match.
+    ``boundary_mode`` defaults to ``"wrap"`` for the periodic focus domain; see
+    ``director_field``.
     """
-    width = 300.0
-    n = 800
-    corner_ratios = []
-    for seed in range(40):
-        rng = np.random.default_rng(seed)
-        x = rng.uniform(0, width, n)
-        y = rng.uniform(0, width, n)
-        theta = rng.uniform(0, np.pi, n)
-        field = director_field(x, y, theta, (width, width), 5.0, 15.0)  # default wrap
-        order = field["order"]
-        ny, nx = order.shape
-        corner = np.mean([
-            order[:3, :3].mean(), order[:3, -3:].mean(),
-            order[-3:, :3].mean(), order[-3:, -3:].mean(),
-        ])
-        centre = order[ny // 2 - 2:ny // 2 + 2, nx // 2 - 2:nx // 2 + 2].mean()
-        corner_ratios.append(corner / max(centre, 1e-9))
-    mean_ratio = float(np.mean(corner_ratios))
-    assert 0.75 < mean_ratio < 1.3, (
-        f"mean corner/centre order should be ~1 with wrap; got {mean_ratio:.2f}"
-    )
+    width_um, height_um = shape_um
+    n_cells = int(x.size)
+    mean_density = n_cells / max(width_um * height_um, 1e-9)
 
+    if sigma_um is None:
+        sigma_um = adaptive_window_radius_um(mean_density, min_samples)
+    if min_separation_um is None:
+        min_separation_um = 2.0 * sigma_um
 
-def test_resolution_controls_aligned_and_random():
-    """Sanity on the significance test: aligned passes, random is rejected."""
-    rng = np.random.default_rng(1)
-    width = 300.0
-    n = 800
-    x = rng.uniform(0, width, n)
-    y = rng.uniform(0, width, n)
-    cell_area = 432.0
+    field = director_field(x, y, theta, shape_um, grid_step_um, sigma_um,
+                           boundary_mode=boundary_mode)
+    significant = significant_order_mask(field, quantile)
 
-    aligned = resolved_defects(x, y, np.full(n, 0.6), (width, width), cell_area)
-    random = resolved_defects(x, y, rng.uniform(0, np.pi, n), (width, width), cell_area)
+    theta_grid = field["theta"]
+    ny, nx = theta_grid.shape
+    rows = np.arange(0, ny - plaquette_step, plaquette_step)
+    cols = np.arange(0, nx - plaquette_step, plaquette_step)
 
-    assert aligned["diagnostics"]["significant_area_fraction"] > 0.5, (
-        "a coherently aligned field should be almost entirely significant"
-    )
-    assert random["diagnostics"]["significant_area_fraction"] < 0.2, (
-        "a randomly oriented field should be almost entirely rejected"
-    )
+    detections: dict[str, np.ndarray] = {"plus": np.zeros((0, 2)),
+                                         "minus": np.zeros((0, 2))}
+    if rows.size >= 2 and cols.size >= 2:
+        corners = [
+            theta_grid[np.ix_(rows, cols)],
+            theta_grid[np.ix_(rows, cols + plaquette_step)],
+            theta_grid[np.ix_(rows + plaquette_step, cols + plaquette_step)],
+            theta_grid[np.ix_(rows + plaquette_step, cols)],
+        ]
+        phases = [2 * corner for corner in corners]
+        winding = np.zeros_like(phases[0])
+        for index in range(4):
+            delta = phases[(index + 1) % 4] - phases[index]
+            winding += np.arctan2(np.sin(delta), np.cos(delta))
+        charge = winding / (4 * np.pi)
+
+        # every corner of the plaquette must sit in a window that beat its null
+        valid = (
+            significant[np.ix_(rows, cols)]
+            & significant[np.ix_(rows, cols + plaquette_step)]
+            & significant[np.ix_(rows + plaquette_step, cols + plaquette_step)]
+            & significant[np.ix_(rows + plaquette_step, cols)]
+        )
+
+        for key, target in (("plus", 0.5), ("minus", -0.5)):
+            hit = valid & (np.abs(charge - target) < 0.2)
+            row_index, col_index = np.nonzero(hit)
+            points = np.column_stack([
+                (cols[col_index] + plaquette_step / 2) * grid_step_um,
+                (rows[row_index] + plaquette_step / 2) * grid_step_um,
+            ])
+            kept: list[np.ndarray] = []
+            for point in points:
+                if all(np.hypot(*(point - other)) >= min_separation_um
+                       for other in kept):
+                    kept.append(point)
+            detections[key] = np.array(kept) if kept else np.zeros((0, 2))
+
+    typical_n = float(np.median(field["effective_n"][field["density"] > 0])) \
+        if (field["density"] > 0).any() else 0.0
+    r_min_full_packing = minimum_window_radius_um(cell_area_um2, min_samples, 1.0)
+
+    return {
+        "plus": detections["plus"],
+        "minus": detections["minus"],
+        "field": field,
+        "significant": significant,
+        "diagnostics": {
+            "n_cells": n_cells,
+            "sigma_um": float(sigma_um),
+            "mean_density_per_um2": float(mean_density),
+            "typical_samples_per_window": typical_n,
+            "null_quantile_at_typical_n": null_order_quantile(
+                max(int(round(typical_n)), 1), quantile
+            ),
+            "median_order_where_significant": float(
+                np.median(field["order"][significant])
+            ) if significant.any() else float("nan"),
+            "significant_area_fraction": float(significant.mean()),
+            "resolution_limit_um": float(min_separation_um),
+            "r_min_at_full_packing_um": r_min_full_packing,
+            "window_is_adequate": bool(sigma_um >= r_min_full_packing * 0.95),
+        },
+    }
