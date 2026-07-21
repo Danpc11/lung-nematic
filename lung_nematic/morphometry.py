@@ -67,7 +67,7 @@ def measure_objects(
             "major_axis_px": major,
             "minor_axis_px": minor,
             "aspect_ratio": major / minor,
-            "equivalent_diameter_px": float(region.equivalent_diameter),
+            "equivalent_diameter_px": float(region.equivalent_diameter_area),
             "orientation_rad": float(region.orientation),
         }
         if microns_per_pixel is not None:
