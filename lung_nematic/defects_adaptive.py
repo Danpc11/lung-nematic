@@ -225,17 +225,30 @@ def adaptive_null_model(
 ) -> dict:
     """Significance of the adaptive defect count against a shuffled null.
 
-    The orientations inside the tissue are permuted, destroying spatial
-    structure while preserving the orientation histogram, the density field and
-    - crucially - the same ``radius_map``. The detector is re-run on each
-    shuffle. This answers the question the order gate alone cannot: is the
-    observed defect count different from what this geometry produces by chance?
+    Only the director angle ``theta`` is permuted (within the tissue). Three
+    fields are held fixed by design: the density field, the ``radius_map``, and
+    - importantly - the ``order`` map. Because the detector's ``min_ring_order``
+    gate reads ``order``, keeping it fixed makes this a null *conditioned on the
+    original confidence map*: it asks whether the observed winding structure is
+    chance *given where the field was locally ordered*, rather than resampling
+    that order too. This is a deliberate choice - it isolates the winding from
+    the order gate - but it means the p-value is conditional, not a test of the
+    order map itself. A null that also resampled ``order`` would ask a different,
+    looser question.
+
+    The detector is re-run on each shuffle. This answers what the order gate
+    alone cannot: is the observed defect count different from what this geometry,
+    at this confidence, produces by chance?
 
     A count *below* the null is the signature of order (a coherent field has
     fewer defects than a random one); a count *above* it means the "defects" are
-    sampling noise. The one-sided depletion p-value is therefore usually the
-    relevant one for ordered tissue.
+    sampling noise; a count *equal* to it is no evidence either way. The
+    one-sided depletion p-value is therefore usually the relevant one for
+    ordered tissue.
     """
+    if n_permutations < 1:
+        raise ValueError("n_permutations must be at least 1.")
+
     observed = detect_defects_adaptive(
         field, tissue_mask, radius_map, config,
         grid_step_px=grid_step_px, min_ring_order=min_ring_order,
