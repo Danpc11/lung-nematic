@@ -244,9 +244,12 @@ always encloses a comparable number of local cells — and integrates the windin
 on a ring of that local radius. Two gates keep it honest. A candidate is
 accepted only where the order *around the ring* exceeds `min_ring_order`, since
 a `±1/2` winding appears by chance in a disordered field and a real defect is a
-singularity *in an ordered field*. And `adaptive_null_model` shuffles the
-orientations while preserving the density field and the same radius map, so the
-observed count is compared against what this geometry produces by chance. For an
+singularity *in an ordered field*. And `adaptive_null_model` permutes only the
+director angle, holding the density field, the radius map, **and the order map**
+fixed — so it is a null *conditioned on the original confidence map*: it asks
+whether the winding structure is chance given where the field was locally
+ordered, rather than resampling that order too. The observed count is compared
+against what this geometry, at this confidence, produces by chance. For an
 ordered tissue the count sits *below* the null (a coherent field has fewer
 defects than a random one); the surviving defects localise to low-order domain
 walls, which `defect_order_context` checks per image. The local cell size is
