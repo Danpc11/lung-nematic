@@ -93,7 +93,6 @@ def extract_features(
 
     order = field["order"]
     density = field.get("density", np.ones_like(order))
-    theta = field["theta"]
 
     coords = candidates[["x_px", "y_px"]].to_numpy(dtype=float)
     charges = candidates["charge"].to_numpy(dtype=float)
