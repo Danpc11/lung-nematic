@@ -235,6 +235,31 @@ the circular mean of `theta - phi` over an annulus (period `pi`, wrapped to
 `(-pi/2, pi/2]`): `~0` aster, `~±pi/2` vortex, in between a spiral. This is a
 pure director quantity.
 
+**Adaptive-radius detection.** The fixed-plaquette detector integrates the
+winding on a loop of one size everywhere, which is wrong for tissue with two
+cell populations of very different size: a loop spanning four or five
+fibroblasts spans many more epithelial cells. `defects_adaptive.py` reads a
+per-pixel integration radius from `adaptive_radius.py` — sized so the loop
+always encloses a comparable number of local cells — and integrates the winding
+on a ring of that local radius. Two gates keep it honest. A candidate is
+accepted only where the order *around the ring* exceeds `min_ring_order`, since
+a `±1/2` winding appears by chance in a disordered field and a real defect is a
+singularity *in an ordered field*. And `adaptive_null_model` shuffles the
+orientations while preserving the density field and the same radius map, so the
+observed count is compared against what this geometry produces by chance. For an
+ordered tissue the count sits *below* the null (a coherent field has fewer
+defects than a random one); the surviving defects localise to low-order domain
+walls, which `defect_order_context` checks per image. The local cell size is
+estimated from nuclear spacing, not morphology — regions without nuclei inherit
+the nearest valid estimate rather than collapsing to the minimum.
+
+**Morphometry.** `morphometry.py` quantifies size distributions: nuclei by
+direct segmentation, and whole cells by watershed expansion from the nuclei into
+the tissue (a territory estimate, flagged `cell_territory`, not a membrane
+segmentation). In phase contrast the cell bodies are segmented directly from the
+coverage texture (`cell`). Per-object tables are written as TSV, in pixels and —
+when a scale is supplied — microns.
+
 ### Manual labelling and candidate classifier
 
 `defect_labelling_colab.ipynb` provides the complete review workflow:
@@ -386,6 +411,9 @@ lung_nematic/            analysis of real histology
 ├── collagen_field.py    structure-tensor collagen field
 ├── fused_field.py       presence-weighted nuclear + collagen field
 ├── defects.py           winding detection (±1/2 and ±1) + multi-scale persistence
+├── defects_adaptive.py  winding on a locally sized ring + shuffled null
+├── adaptive_radius.py   integration radius from local cell spacing
+├── morphometry.py       nucleus and cell size quantification (TSV)
 ├── null_model.py        permutation null (nuclear and collagen)
 ├── colocalization.py    defect core/annulus vs local-order bootstrap test
 ├── defect_maps.py       per-defect director maps + spiral angle
@@ -459,6 +487,17 @@ by cell size, not tissue density. The window can only be widened past `R_min` at
 the cost of being unable to separate defect pairs closer than about `2 * R_min`;
 the two cannot both be had.
 
+**The direction against the null matters.** When a defect count is compared to a
+shuffled null, *more* defects than chance means the field is noisy and the
+"defects" are sampling artifacts — the case for the sparse simulation
+mesenchyme. But *fewer* defects than chance is the opposite: it is the signature
+of an ordered nematic, which by being coherent avoids the singularities a random
+field is forced into. Well-tuned collagen histology shows exactly this — a
+significant depletion, with the few surviving defects sitting on low-order domain
+walls. A one-sided depletion test is therefore usually the relevant one for
+ordered tissue, and a two-sided "not significant" can hide a real, informative
+depletion.
+
 #### Analysis
 
 - Candidate defects only; **not clinically validated**.
@@ -500,6 +539,10 @@ the two cannot both be had.
   they do not continue from the final spatial configuration of the agent run.
 
 ---
+### Version history
+
+See [`CHANGELOG.md`](CHANGELOG.md). Current release: 0.2.0.
+
 ### Citation
 
 See [`CITATION.cff`](CITATION.cff).
