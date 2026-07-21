@@ -130,6 +130,7 @@ Selected flags (each overrides the config when given):
 | `--save-defect-maps`, `--defect-map-window` | Per-defect director maps |
 | `--mask-normalized-smoothing` | Confine smoothing to tissue (collagen) |
 | `--n-permutations`, `--null-mode`, `--null-downsample` | Null model settings |
+| `--null-n-jobs` | Threads for the permutation null (`-1` for all cores, default 1). Results are deterministic regardless of thread count. |
 | `--n-bootstrap` | Colocalization bootstrap size |
 | `--collagen-inner-scale` | Gradient scale of the structure tensor |
 | `--seed` | Seed for all stochastic controls |
