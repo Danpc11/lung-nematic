@@ -2,9 +2,10 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 [![Tests](https://github.com/Danpc11/lung-nematic/actions/workflows/tests.yml/badge.svg)](https://github.com/Danpc11/lung-nematic/actions/workflows/tests.yml)
-[![Analysis in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/lung_nematic_colab.ipynb)
-[![Labelling in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/defect_labelling_colab.ipynb)
-[![Simulation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/ipf_simulation_colab.ipynb)
+[![Histology analysis](https://img.shields.io/badge/Colab-Histology%20analysis-4285F4?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/lung_nematic_colab.ipynb)
+[![Defect labelling](https://img.shields.io/badge/Colab-Defect%20labelling-34A853?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/defect_labelling_colab.ipynb)
+[![Alveolar IPF simulation](https://img.shields.io/badge/Colab-Alveolar%20IPF%20simulation-F9AB00?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/ipf_simulation_colab.ipynb)
+[![Fibrofocus simulation](https://img.shields.io/badge/Colab-Fibrofocus%20simulation-EA4335?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/fibrofocus_colab.ipynb)
 
 Nematic order in fibrotic lung, approached from two directions:
 
