@@ -197,3 +197,81 @@ def test_far_from_nuclei_inherits_valid_size():
         f"far-from-nuclei region got size {far:.1f}, should inherit ~20 not clamp to 5"
     )
     assert (size <= 5.01).mean() < 0.1, "most of the image should not be at the minimum"
+
+
+def test_null_model_reports_ties_as_equal():
+    """observed == null must be 'equal', not 'enriched', with z defined only on tie."""
+    from lung_nematic.defects_adaptive import adaptive_null_model
+
+    shape = (200, 200)
+    # a disordered low-order field: observed 0 defects, null also 0
+    field = {"theta": np.full(shape, 0.5), "order": np.full(shape, 0.02),
+             "density": np.ones(shape)}
+    result = adaptive_null_model(
+        field, np.ones(shape, bool), np.full(shape, 25.0),
+        _config(), n_permutations=10, grid_step_px=15, seed=0,
+    )
+    assert result["observed_count"] == 0
+    assert result["null_mean"] == 0.0
+    assert result["direction"] == "equal", (
+        f"a tie must be 'equal', got '{result['direction']}'"
+    )
+    # z is 0 on a genuine tie (both zero spread and zero difference)
+    assert result["z_score"] == 0.0
+
+
+def test_null_model_z_is_nan_when_undefined():
+    """Zero null spread with a non-tie observation gives z = NaN, not 0."""
+    from lung_nematic.defects_adaptive import adaptive_null_model
+    import lung_nematic.defects_adaptive as module
+
+    # force a constant null of 3 while the observed is 0, so std=0 but no tie
+    shape = (200, 200)
+    field = {"theta": np.full(shape, 0.5), "order": np.full(shape, 0.02),
+             "density": np.ones(shape)}
+    original = module.detect_defects_adaptive
+    calls = {"n": 0}
+
+    def fake_detect(*args, **kwargs):
+        # first call is the observed (return empty), the rest are the null
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return pd.DataFrame()
+        return pd.DataFrame({"x_px": [1.0, 2.0, 3.0], "y_px": [1.0, 2.0, 3.0],
+                             "charge": [0.5, 0.5, 0.5]})
+
+    module.detect_defects_adaptive = fake_detect
+    try:
+        result = adaptive_null_model(
+            field, np.ones(shape, bool), np.full(shape, 25.0),
+            _config(), n_permutations=5, grid_step_px=15, seed=0,
+        )
+    finally:
+        module.detect_defects_adaptive = original
+
+    assert result["null_std"] == 0.0
+    assert result["direction"] == "depleted"  # observed 0 < null 3
+    assert np.isnan(result["z_score"]), "z must be NaN when std=0 without a tie"
+
+
+def test_adaptive_null_parallel_matches_serial():
+    """The parallel adaptive null must be identical to the serial one."""
+    from lung_nematic.defects_adaptive import adaptive_null_model
+
+    shape = (250, 250)
+    yy, xx = np.mgrid[0:shape[0], 0:shape[1]].astype(float)
+    theta = np.mod(0.4 + 0.3 * np.sin(xx / 80.0), np.pi)
+    radius = np.hypot(xx - 125, yy - 125)
+    field = {"theta": theta, "order": np.full(shape, 0.6),
+             "density": 1.0 + 0.5 * np.exp(-0.5 * (radius / 110) ** 2)}
+
+    serial = adaptive_null_model(
+        field, np.ones(shape, bool), np.full(shape, 25.0),
+        _config(), n_permutations=12, grid_step_px=12, seed=0, n_jobs=1,
+    )
+    parallel = adaptive_null_model(
+        field, np.ones(shape, bool), np.full(shape, 25.0),
+        _config(), n_permutations=12, grid_step_px=12, seed=0, n_jobs=2,
+    )
+    assert np.array_equal(serial["null_counts"], parallel["null_counts"])
+    assert serial["p_depletion"] == parallel["p_depletion"]
