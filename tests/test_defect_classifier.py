@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from lung_nematic.defect_features import (
     FEATURE_COLUMNS,
@@ -147,7 +146,6 @@ def test_uncertain_class_is_supported():
 
 def test_balanced_weighting_resists_all_artefact_collapse():
     """With a heavy class imbalance the model must not just predict the majority."""
-    rng = np.random.default_rng(3)
     features, labels, _ = _labelled_table(n_per_class=40)
     # make artefacts 8x more common, as real hand-labelled sets tend to be
     keep_real = labels[labels == "real"].index[:5]
