@@ -28,6 +28,7 @@ from scipy.ndimage import distance_transform_edt
 from .config import AnalysisConfig
 from .defects import wrap_angle
 from .nematic import get_density_threshold
+from .null_model import _parallel_counts
 
 
 def _ring_winding(
@@ -220,6 +221,7 @@ def adaptive_null_model(
     grid_step_px: int | None = None,
     min_ring_order: float = 0.15,
     seed: int = 0,
+    n_jobs: int = 1,
 ) -> dict:
     """Significance of the adaptive defect count against a shuffled null.
 
@@ -240,25 +242,47 @@ def adaptive_null_model(
     )
     observed_count = len(observed)
 
-    rng = np.random.default_rng(seed)
     inside = np.nonzero(tissue_mask)
     theta_inside = field["theta"][inside]
 
-    null_counts = np.empty(n_permutations, dtype=int)
-    for i in range(n_permutations):
+    def _count_for_seed(seed: np.uint64) -> int:
+        # a fixed seed per permutation makes the result independent of thread
+        # count and execution order, exactly as the main null model does
+        rng = np.random.default_rng(int(seed))
         shuffled_theta = field["theta"].copy()
         shuffled_theta[inside] = rng.permutation(theta_inside)
         shuffled = dict(field)
         shuffled["theta"] = shuffled_theta
-        null = detect_defects_adaptive(
+        return len(detect_defects_adaptive(
             shuffled, tissue_mask, radius_map, config,
             grid_step_px=grid_step_px, min_ring_order=min_ring_order,
-        )
-        null_counts[i] = len(null)
+        ))
+
+    permutation_seeds = np.random.SeedSequence(seed).generate_state(n_permutations)
+    null_counts, workers_used = _parallel_counts(
+        _count_for_seed, permutation_seeds, n_permutations, n_jobs
+    )
 
     null_mean = float(null_counts.mean())
     null_std = float(null_counts.std())
-    z = (observed_count - null_mean) / null_std if null_std > 0 else 0.0
+
+    # Direction has three states. A zero null spread only means z = 0 when the
+    # observation ties it; otherwise the z-score is undefined, not zero, and
+    # calling a tie "enriched" (as > vs a strict < did) is wrong.
+    if observed_count < null_mean:
+        direction = "depleted"
+    elif observed_count > null_mean:
+        direction = "enriched"
+    else:
+        direction = "equal"
+
+    if null_std > 0:
+        z = (observed_count - null_mean) / null_std
+    elif direction == "equal":
+        z = 0.0
+    else:
+        z = float("nan")
+
     # one-sided tails with the usual +1 smoothing
     p_depletion = (1 + int((null_counts <= observed_count).sum())) / (n_permutations + 1)
     p_enrichment = (1 + int((null_counts >= observed_count).sum())) / (n_permutations + 1)
@@ -270,6 +294,7 @@ def adaptive_null_model(
         "z_score": float(z),
         "p_depletion": float(p_depletion),
         "p_enrichment": float(p_enrichment),
-        "direction": "depleted" if observed_count < null_mean else "enriched",
+        "direction": direction,
+        "null_workers_used": workers_used,
         "null_counts": null_counts,
     }
