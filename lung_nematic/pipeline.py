@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +15,7 @@ from .config import AnalysisConfig
 from .defect_maps import render_defect_maps
 from .defects import detect_multiscale_defects
 from .fused_field import detect_multiscale_fused_defects
-from .io_utils import read_rgb
+from .io_utils import json_safe as _json_safe, read_rgb
 from .metrics import summarize_image
 from .null_model import (
     run_collagen_null_model,
@@ -35,22 +34,6 @@ def _safe_identifier(value: object) -> str:
     return text
 
 
-def _json_safe(obj):
-    """Recursively convert to strict-JSON types (non-finite floats -> null)."""
-    if isinstance(obj, dict):
-        return {key: _json_safe(value) for key, value in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_json_safe(value) for value in obj]
-    if isinstance(obj, np.ndarray):
-        return _json_safe(obj.tolist())
-    if isinstance(obj, np.integer):
-        return int(obj)
-    if isinstance(obj, np.bool_):
-        return bool(obj)
-    if isinstance(obj, (np.floating, float)):
-        value = float(obj)
-        return value if math.isfinite(value) else None
-    return obj
 
 
 def _detect_for_field(
