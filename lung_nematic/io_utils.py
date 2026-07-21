@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from pathlib import Path
 
 import numpy as np
@@ -107,3 +109,27 @@ def read_rgb(image_path: str | Path) -> np.ndarray:
     path = Path(image_path)
     with Image.open(path) as image:
         return np.asarray(image.convert("RGB"))
+
+
+def json_safe(obj):
+    """Recursively convert to strict-JSON types (non-finite floats -> null).
+
+    Shared so every module that serialises results - the pipeline, the adaptive
+    notebook cell, anything writing a JSON summary - produces standards-compliant
+    JSON. NaN and inf become null, and numpy scalars become their Python
+    equivalents, so ``json.dumps(json_safe(x), allow_nan=False)`` never raises.
+    """
+    if isinstance(obj, dict):
+        return {key: json_safe(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(value) for value in obj]
+    if isinstance(obj, np.ndarray):
+        return json_safe(obj.tolist())
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, (np.floating, float)):
+        value = float(obj)
+        return value if math.isfinite(value) else None
+    return obj
