@@ -52,3 +52,42 @@ jobs:
           python -c "import simulations.alveolar"
           python -c "import simulations.fibrofocus"
           python -c "import simulations.coupled_analysis"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install ruff
+      - name: Ruff
+        run: ruff check lung_nematic simulations tests
+
+  notebooks:
+    # A malformed notebook (collapsed source, invalid schema) is invisible until
+    # someone opens it in Colab. nbformat.validate catches it in CI.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install nbformat
+      - name: Validate notebooks
+        run: |
+          python - <<'PY'
+          import glob, sys
+          import nbformat
+          failed = False
+          for path in glob.glob("*.ipynb"):
+              try:
+                  nbformat.validate(nbformat.read(path, as_version=4))
+                  print(f"ok   {path}")
+              except Exception as error:
+                  print(f"FAIL {path}: {error}")
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PY
