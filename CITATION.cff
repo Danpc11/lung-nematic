@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software in your research, please cite it using the
+  metadata below.
+title: "lung-nematic: Nematic field and topological defect analysis for lung histology"
+type: software
+version: 0.1.0
+date-released: 2026-07-20
+authors:
+  - given-names: Daniel
+    family-names: Pérez-Calixto
+    affiliation: "Instituto Nacional de Medicina Genómica (INMEGEN)"
+  - given-names: José
+    family-names: Cisneros
+    affiliation: "Instituto Nacional de Enfermedades Respiratorias Ismael Cosío Villegas (INER)"
+  - given-names: Genaro
+    family-names: Vázquez-Victorio
+    affiliation: "Facultad de Ciencias, Universidad Nacional Autónoma de México (UNAM)"
+  - given-names: Hugo
+    family-names: Tovar-Romero
+    affiliation: "Instituto Nacional de Medicina Genómica (INMEGEN)"
+repository-code: "https://github.com/Danpc11/lung-nematic"
+url: "https://github.com/Danpc11/lung-nematic/releases/tag/v0.1.0"
+license: MIT
+keywords:
+  - pulmonary fibrosis
+  - lung histology
+  - nematic order
+  - topological defects
+  - image analysis
+  - computational biology
+  - active matter
+abstract: >-
+  lung-nematic is a research toolkit for measuring nematic director fields
+  and candidate topological defects in lung histology, evaluating statistical
+  controls, and running mechanism-based simulations of pulmonary fibrosis.
