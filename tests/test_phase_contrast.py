@@ -9,7 +9,6 @@ import pytest
 
 from lung_nematic.config import load_default_config
 from lung_nematic.phase_contrast import (
-    StiffnessOrderCalibration,
     analyze_phase_contrast,
     build_calibration,
     cell_texture_mask,
