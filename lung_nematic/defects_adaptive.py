@@ -61,14 +61,20 @@ def detect_defects_adaptive(
     config: AnalysisConfig,
     grid_step_px: int | None = None,
     n_ring_points: int = 16,
+    min_ring_order: float = 0.15,
 ) -> pd.DataFrame:
     """Detect +/-1/2 defects with a locally adaptive loop radius.
 
     ``radius_map`` is a per-pixel integration radius (from
     ``adaptive_radius.adaptive_radius_map``). At each grid node the winding is
     integrated on a ring of the local radius; a candidate is kept only where the
-    whole ring lies in tissue, sits far enough from the edge, and the enclosed
-    order and density pass the same gates the fixed detector uses.
+    whole ring lies in tissue, sits far enough from the edge, the enclosed
+    density passes the gate, **and the order around the ring exceeds
+    ``min_ring_order``**. That last gate is essential: a winding of +/-1/2 will
+    appear by chance in a disordered field, so without a floor on the
+    surrounding order the detector reports "defects" in pure noise. A genuine
+    defect is a singularity *in an otherwise ordered field*, so real structure
+    must be present around the loop.
 
     The returned frame carries ``integration_radius_px`` per candidate, so the
     adaptive radius that produced each detection is auditable.
@@ -109,6 +115,11 @@ def detect_defects_adaptive(
             if not np.all(ring_tissue):
                 continue
             if not np.all(ring_density > threshold):
+                continue
+            # The gate that was missing: a real defect is a singularity in an
+            # ordered field. Require genuine order around the loop, or a chance
+            # +/-1/2 winding in noise is reported as a defect.
+            if ring_order.mean() < min_ring_order:
                 continue
 
             candidates.append({
@@ -197,4 +208,68 @@ def defect_order_context(
         "order_at_defects": at_defects,
         "order_in_tissue": in_tissue,
         "defects_on_walls": bool(at_defects < in_tissue),
+    }
+
+
+def adaptive_null_model(
+    field: dict[str, np.ndarray],
+    tissue_mask: np.ndarray,
+    radius_map: np.ndarray,
+    config: AnalysisConfig,
+    n_permutations: int = 99,
+    grid_step_px: int | None = None,
+    min_ring_order: float = 0.15,
+    seed: int = 0,
+) -> dict:
+    """Significance of the adaptive defect count against a shuffled null.
+
+    The orientations inside the tissue are permuted, destroying spatial
+    structure while preserving the orientation histogram, the density field and
+    - crucially - the same ``radius_map``. The detector is re-run on each
+    shuffle. This answers the question the order gate alone cannot: is the
+    observed defect count different from what this geometry produces by chance?
+
+    A count *below* the null is the signature of order (a coherent field has
+    fewer defects than a random one); a count *above* it means the "defects" are
+    sampling noise. The one-sided depletion p-value is therefore usually the
+    relevant one for ordered tissue.
+    """
+    observed = detect_defects_adaptive(
+        field, tissue_mask, radius_map, config,
+        grid_step_px=grid_step_px, min_ring_order=min_ring_order,
+    )
+    observed_count = len(observed)
+
+    rng = np.random.default_rng(seed)
+    inside = np.nonzero(tissue_mask)
+    theta_inside = field["theta"][inside]
+
+    null_counts = np.empty(n_permutations, dtype=int)
+    for i in range(n_permutations):
+        shuffled_theta = field["theta"].copy()
+        shuffled_theta[inside] = rng.permutation(theta_inside)
+        shuffled = dict(field)
+        shuffled["theta"] = shuffled_theta
+        null = detect_defects_adaptive(
+            shuffled, tissue_mask, radius_map, config,
+            grid_step_px=grid_step_px, min_ring_order=min_ring_order,
+        )
+        null_counts[i] = len(null)
+
+    null_mean = float(null_counts.mean())
+    null_std = float(null_counts.std())
+    z = (observed_count - null_mean) / null_std if null_std > 0 else 0.0
+    # one-sided tails with the usual +1 smoothing
+    p_depletion = (1 + int((null_counts <= observed_count).sum())) / (n_permutations + 1)
+    p_enrichment = (1 + int((null_counts >= observed_count).sum())) / (n_permutations + 1)
+
+    return {
+        "observed_count": observed_count,
+        "null_mean": null_mean,
+        "null_std": null_std,
+        "z_score": float(z),
+        "p_depletion": float(p_depletion),
+        "p_enrichment": float(p_enrichment),
+        "direction": "depleted" if observed_count < null_mean else "enriched",
+        "null_counts": null_counts,
     }
