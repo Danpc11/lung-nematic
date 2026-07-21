@@ -210,7 +210,8 @@ def draw_dense_director(
     blank, so no vectors appear where there is no tissue.
     """
     import matplotlib
-    matplotlib.use("Agg")
+    if matplotlib.get_backend().lower() != "agg":
+        matplotlib.use("Agg", force=True)
     import matplotlib.pyplot as plt
     from matplotlib.collections import LineCollection
 
