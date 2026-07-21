@@ -39,7 +39,7 @@ visible rather than to avoid it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace, field
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pandas as pd
