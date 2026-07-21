@@ -186,3 +186,62 @@ def save_diagnostic_panel(
     figure.tight_layout()
     figure.savefig(output, dpi=160, bbox_inches="tight")
     plt.close(figure)
+
+
+def draw_dense_director(
+    background: np.ndarray,
+    field: dict,
+    tissue_mask: np.ndarray,
+    output_path,
+    grid_step_px: int = 12,
+    min_order: float = 0.03,
+    vector_length_frac: float = 0.55,
+    color: str = "yellow",
+    linewidth: float = 0.7,
+    dpi: int = 95,
+    title: str = "",
+) -> None:
+    """OrientationJ-style dense director overlay, confined to the mask.
+
+    Unlike ``save_overlay``, which marks defects on a coarse field, this draws a
+    line at every grid node inside the tissue - the look of an OrientationJ
+    vector field - with uniform-length segments so orientation, not magnitude,
+    is what the eye reads. Nodes outside the mask or below ``min_order`` are left
+    blank, so no vectors appear where there is no tissue.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import LineCollection
+
+    theta = field["theta"]
+    order = field["order"]
+    height, width = tissue_mask.shape
+
+    figure, ax = plt.subplots(figsize=(width / 180, height / 180))
+    if background.ndim == 2:
+        ax.imshow(background, cmap="gray", vmin=0, vmax=255)
+    else:
+        ax.imshow(background)
+
+    length = grid_step_px * vector_length_frac
+    segments = []
+    for y in range(grid_step_px, height - grid_step_px, grid_step_px):
+        for x in range(grid_step_px, width - grid_step_px, grid_step_px):
+            if not tissue_mask[y, x] or order[y, x] < min_order:
+                continue
+            angle = theta[y, x]
+            dx, dy = length * np.cos(angle), length * np.sin(angle)
+            segments.append([(x - dx, y - dy), (x + dx, y + dy)])
+
+    ax.add_collection(LineCollection(segments, colors=color,
+                                     linewidths=linewidth, alpha=0.9))
+    ax.set_xlim(0, width)
+    ax.set_ylim(height, 0)
+    ax.axis("off")
+    if title:
+        ax.set_title(title, fontsize=11)
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    plt.close(figure)
+    return len(segments)
