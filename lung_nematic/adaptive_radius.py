@@ -28,7 +28,7 @@ scalar.
 from __future__ import annotations
 
 import numpy as np
-from scipy.ndimage import gaussian_filter, uniform_filter
+from scipy.ndimage import distance_transform_edt, gaussian_filter, uniform_filter
 
 
 def cell_size_from_nuclei(
@@ -44,6 +44,13 @@ def cell_size_from_nuclei(
     size; those distances are splatted onto the frame and smoothed into a dense
     map. Epithelial regions (many close nuclei) get a small size, fibroblast
     stroma (sparse nuclei) a large one.
+
+    Caveat: this measures nuclear *spacing*, i.e. local nuclear density, not
+    morphological cell size. For fibroblasts, whose long axis far exceeds their
+    nuclear spacing, spacing under-estimates true cell length. Where actual cell
+    or nucleus morphology is needed, use the morphometry module and its measured
+    axes instead. Spacing is used here only to set an integration radius that
+    scales with local cell packing, which is what the winding calculation needs.
     """
     height, width = shape
     size_map = np.full(shape, np.nan)
@@ -62,15 +69,26 @@ def cell_size_from_nuclei(
         np.add.at(count, (ys, xs), 1.0)
         accum = gaussian_filter(accum, smoothing_px)
         count = gaussian_filter(count, smoothing_px)
+        # Only trust the estimate where nuclei actually contributed. Elsewhere
+        # the smoothed count is ~0 and the ratio is meaningless (it collapses to
+        # the minimum after clipping), so mark those pixels NaN and fill them
+        # from the nearest region that had real nuclear information. Without
+        # this, the vast tissue between sparse nuclei is wrongly called small.
+        support = count > (count.max() * 1e-3) if count.max() > 0 else count > 0
         with np.errstate(invalid="ignore", divide="ignore"):
-            size_map = accum / np.maximum(count, 1e-9)
+            size_map = np.where(support, accum / np.maximum(count, 1e-9), np.nan)
 
-    # fill any gaps with the global median and clip to a sane band
+    # fill unsupported regions from the nearest valid estimate, not a flat
+    # median, so a large sparse region inherits the size of the tissue it
+    # adjoins rather than being clamped to the minimum
     if np.isnan(size_map).all():
         size_map = np.full(shape, (min_size_px + max_size_px) / 2)
-    else:
-        median = np.nanmedian(size_map)
-        size_map = np.where(np.isnan(size_map), median, size_map)
+    elif np.isnan(size_map).any():
+        valid = ~np.isnan(size_map)
+        nearest = distance_transform_edt(
+            ~valid, return_distances=False, return_indices=True
+        )
+        size_map = size_map[tuple(nearest)]
     return np.clip(size_map, min_size_px, max_size_px)
 
 
