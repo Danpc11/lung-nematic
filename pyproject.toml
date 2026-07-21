@@ -30,3 +30,9 @@ include = ["lung_nematic*", "simulations*"]
 lung_nematic = ["data/*.json"]
 simulations = ["configs/*.json"]
 
+
+[tool.ruff]
+# The simulation modules use compact `a = 0; b = 0` initialisers deliberately;
+# E702 is a style preference, not a correctness issue, so it is not enforced.
+lint.ignore = ["E702"]
+lint.exclude = ["*.ipynb"]
