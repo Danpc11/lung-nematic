@@ -119,3 +119,81 @@ def test_empty_defects_context():
     mask = np.ones(shape, bool)
     context = defect_order_context(pd.DataFrame(), field, mask)
     assert context["n_defects"] == 0
+
+
+# ---------------------------------------------------- the negative controls
+def test_random_field_gives_no_defects():
+    """A disordered field (S~0) must yield no defects, not chance windings.
+
+    This is the guard for the order gate. A +/-1/2 winding appears by chance in
+    noise, so without a floor on the surrounding order the detector reports
+    defects in a random field.
+    """
+    shape = (300, 300)
+    config = _config()
+    total = 0
+    for seed in range(10):
+        rng = np.random.default_rng(seed)
+        yy, xx = np.mgrid[0:shape[0], 0:shape[1]].astype(float)
+        radius = np.hypot(xx - 150, yy - 150)
+        field = {
+            "theta": rng.uniform(0, np.pi, shape),
+            "order": np.full(shape, 0.02),
+            "density": 1.0 + 0.5 * np.exp(-0.5 * (radius / 135) ** 2),
+        }
+        detected = detect_defects_adaptive(
+            field, np.ones(shape, bool), np.full(shape, 25.0),
+            config, grid_step_px=10,
+        )
+        total += len(detected)
+    assert total == 0, f"random fields produced {total} defects; order gate failed"
+
+
+def test_order_gate_threshold_is_respected():
+    """Raising the order floor should not admit low-order candidates."""
+    shape = (300, 300)
+    field = _planted_defect_field(shape, charge=0.5)
+    # depress the order everywhere so nothing clears a high floor
+    field["order"] = field["order"] * 0.1
+    detected = detect_defects_adaptive(
+        field, np.ones(shape, bool), np.full(shape, 30.0),
+        _config(), grid_step_px=10, min_ring_order=0.5,
+    )
+    assert detected.empty, "a high order floor should reject a low-order field"
+
+
+def test_null_model_depletes_for_ordered_field():
+    """An ordered field should show fewer defects than its shuffled null."""
+    from lung_nematic.defects_adaptive import adaptive_null_model
+
+    shape = (250, 250)
+    # a smoothly varying but mostly aligned field: few real defects
+    yy, xx = np.mgrid[0:shape[0], 0:shape[1]].astype(float)
+    theta = np.mod(0.4 + 0.3 * np.sin(xx / 80.0), np.pi)
+    order = np.full(shape, 0.6)
+    radius = np.hypot(xx - 125, yy - 125)
+    density = 1.0 + 0.5 * np.exp(-0.5 * (radius / 110) ** 2)
+    field = {"theta": theta, "order": order, "density": density}
+
+    result = adaptive_null_model(
+        field, np.ones(shape, bool), np.full(shape, 25.0),
+        _config(), n_permutations=15, grid_step_px=12, seed=0,
+    )
+    assert result["observed_count"] <= result["null_mean"], (
+        "an ordered field should not have more defects than its shuffle"
+    )
+    assert "p_depletion" in result
+
+
+def test_far_from_nuclei_inherits_valid_size():
+    """Regions with no nuclei must inherit a nearby valid size, not the min."""
+    from lung_nematic.adaptive_radius import cell_size_from_nuclei
+
+    centroids = np.array([[500.0, 500.0], [520.0, 500.0]])
+    size = cell_size_from_nuclei(centroids, (1000, 1000), smoothing_px=40.0,
+                                 min_size_px=5.0, max_size_px=80.0)
+    far = size[50:100, 50:100].mean()
+    assert far > 10.0, (
+        f"far-from-nuclei region got size {far:.1f}, should inherit ~20 not clamp to 5"
+    )
+    assert (size <= 5.01).mean() < 0.1, "most of the image should not be at the minimum"
