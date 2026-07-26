@@ -49,6 +49,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the preset's biological-rate multiplier.",
     )
     parser.add_argument("--orbit-degrees", type=float, default=2.1)
+    parser.add_argument(
+        "--presentation",
+        action="store_true",
+        help=(
+            "Clean illustration style: no axes, colourbar or technical title, "
+            "solid-shaded alveoli and a compact corner legend. Deterministic "
+            "and model-driven, just a different display style."
+        ),
+    )
     parser.add_argument("--no-gif", action="store_true")
     parser.add_argument("--no-mp4", action="store_true")
     return parser
@@ -87,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     render = Alveolar3DRenderConfig(
         breathing_frames_per_cycle=args.breathing_frames,
         orbit_deg_per_frame=args.orbit_degrees / args.breathing_frames,
+        presentation=args.presentation,
     )
     outputs = run_and_record_3d(
         config,
