@@ -510,8 +510,8 @@ class MesenchymeLayer:
             "mean_stiffness_kPa": float(self.stiffness_kPa.mean()),
             "max_stiffness_kPa": float(self.stiffness_kPa.max()),
             "mean_septal_thickness_um": float(2 * self.septal_half_thickness.mean()),
-            "n_defect_plus": int(len(defects["plus"])),
-            "n_defect_minus": int(len(defects["minus"])),
+            "n_defect_plus": len(defects["plus"]),
+            "n_defect_minus": len(defects["minus"]),
             "defect_density_per_mm2": float(
                 (len(defects["plus"]) + len(defects["minus"])) / (area / 1e6)
             ),
@@ -582,10 +582,10 @@ class CoupledSimulation:
         combined.update(self.mesenchyme.metrics())
         return combined
 
-    def run(self, record_every_h: float = 24.0) -> "CoupledSimulation":
+    def run(self, record_every_h: float = 24.0) -> CoupledSimulation:
         cfg = self.cfg
-        n_steps = int(round(cfg.total_time_h / cfg.dt_h))
-        every = max(1, int(round(record_every_h / cfg.dt_h)))
+        n_steps = round(cfg.total_time_h / cfg.dt_h)
+        every = max(1, round(record_every_h / cfg.dt_h))
         self.history.append(self.metrics())
         for index in range(1, n_steps + 1):
             self.step()

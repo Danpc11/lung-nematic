@@ -18,10 +18,10 @@ a stepping stone toward a true three-dimensional tissue simulation.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import json
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 
@@ -36,7 +36,6 @@ from .model import (
     KRT8,
     AlveolarConfig,
 )
-
 
 EPITHELIAL_COLOURS = {
     AT1: "#28C76F",
@@ -230,20 +229,20 @@ def _epithelial_particle_indices(coupled: CoupledSimulation) -> np.ndarray:
     n_segments = ep.geometry.n_segments
     baseline_at2 = max(
         1,
-        int(round(cfg.healthy_at2_surface_fraction * n_segments)),
+        round(cfg.healthy_at2_surface_fraction * n_segments),
     )
     baseline_at1_cells = max(
         1,
-        int(round(
+        round(
             baseline_at2 / cfg.healthy_at2_to_at1_number_ratio
-        )),
+        ),
     )
     baseline_at1_surface = max(n_segments - baseline_at2, 1)
     target_at1 = max(
         1,
-        int(round(
+        round(
             baseline_at1_cells * at1.size / baseline_at1_surface
-        )),
+        ),
     )
     positions = np.linspace(
         0,
@@ -719,8 +718,8 @@ def run_and_record_particles(
     )
 
     coupled = CoupledSimulation(config)
-    n_steps = int(round(config.total_time_h / config.dt_h))
-    every = max(1, int(round(frame_every_h / config.dt_h)))
+    n_steps = round(config.total_time_h / config.dt_h)
+    every = max(1, round(frame_every_h / config.dt_h))
     frame_paths: list[Path] = []
     records: list[dict] = []
 
@@ -767,7 +766,7 @@ def run_and_record_particles(
                 macro_block_size=None,
             )
             outputs["mp4"] = str(mp4_path)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - encoder can fail many ways; clean up and continue
             if mp4_path.exists():
                 mp4_path.unlink()
             outputs["mp4_error"] = (

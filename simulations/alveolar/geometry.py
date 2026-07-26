@@ -165,7 +165,7 @@ class AlveolarGeometry:
         lengths: list[float] = []
 
         for septum in self.septa:
-            n_segments = max(1, int(round(septum.length_um / self.segment_length_um)))
+            n_segments = max(1, round(septum.length_um / self.segment_length_um))
             start_index = len(centres)
             direction = septum.end - septum.start
             unit = direction / max(np.linalg.norm(direction), 1e-9)

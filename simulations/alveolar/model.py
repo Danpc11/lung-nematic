@@ -293,7 +293,7 @@ class AlveolarSimulation:
 
         # --- epithelium: AT1 ~93% and AT2 ~7% of healthy human surface ---
         self.state = np.full(n_seg, AT1, dtype=np.int8)
-        n_at2 = max(1, int(round(config.healthy_at2_surface_fraction * n_seg)))
+        n_at2 = max(1, round(config.healthy_at2_surface_fraction * n_seg))
         # Even spacing prevents chance clusters and keeps the initialization
         # reproducible.  These are equal-area surface patches; particle number
         # is reconstructed separately because a single flat AT1 cell spans a
@@ -545,10 +545,10 @@ class AlveolarSimulation:
             "n_segments": n_seg,
         }
 
-    def run(self, record_every_h: float = 12.0, callback=None) -> "AlveolarSimulation":
+    def run(self, record_every_h: float = 12.0, callback=None) -> AlveolarSimulation:
         cfg = self.cfg
-        n_steps = int(round(cfg.total_time_h / cfg.dt_h))
-        every = max(1, int(round(record_every_h / cfg.dt_h)))
+        n_steps = round(cfg.total_time_h / cfg.dt_h)
+        every = max(1, round(record_every_h / cfg.dt_h))
         self.history.append(self.metrics())
         for index in range(1, n_steps + 1):
             self.step()

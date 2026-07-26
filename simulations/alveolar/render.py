@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
@@ -25,8 +26,16 @@ from matplotlib.collections import LineCollection, PolyCollection
 from matplotlib.patches import Patch
 
 from .model import (
-    ABERRANT, AT1, AT2, COLLAPSED, EMPTY, INDURATED, KRT8, OPEN,
-    AlveolarConfig, AlveolarSimulation,
+    ABERRANT,
+    AT1,
+    AT2,
+    COLLAPSED,
+    EMPTY,
+    INDURATED,
+    KRT8,
+    OPEN,
+    AlveolarConfig,
+    AlveolarSimulation,
 )
 
 STATE_COLOUR = {
@@ -131,8 +140,8 @@ def run_and_record(config: AlveolarConfig, output_dir: str | Path,
     config.to_json(output_dir / "config.json")
 
     sim = AlveolarSimulation(config)
-    n_steps = int(round(config.total_time_h / config.dt_h))
-    every = max(1, int(round(frame_every_h / config.dt_h)))
+    n_steps = round(config.total_time_h / config.dt_h)
+    every = max(1, round(frame_every_h / config.dt_h))
 
     paths: list[Path] = []
     records: list[dict] = []
@@ -306,8 +315,8 @@ def run_and_record_coupled(config, output_dir: str | Path,
     config.to_json(output_dir / "config.json")
 
     coupled = CoupledSimulation(config)
-    n_steps = int(round(config.total_time_h / config.dt_h))
-    every = max(1, int(round(frame_every_h / config.dt_h)))
+    n_steps = round(config.total_time_h / config.dt_h)
+    every = max(1, round(frame_every_h / config.dt_h))
     paths: list[Path] = []
     records: list[dict] = []
 

@@ -161,7 +161,7 @@ def _context(tracks: list[DefectTrack]) -> dict:
     out = {"n": len(tracks)}
     for key in sorted(keys):
         values = [track.mean_sample(key) for track in tracks]
-        values = [v for v in values if v == v]
+        values = [v for v in values if not np.isnan(v)]
         if values:
             out[key] = float(np.mean(values))
     out["mean_displacement_um"] = float(
