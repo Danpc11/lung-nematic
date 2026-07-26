@@ -15,7 +15,8 @@ from .config import AnalysisConfig
 from .defect_maps import render_defect_maps
 from .defects import detect_multiscale_defects
 from .fused_field import detect_multiscale_fused_defects
-from .io_utils import json_safe as _json_safe, read_rgb
+from .io_utils import json_safe as _json_safe
+from .io_utils import read_rgb
 from .metrics import summarize_image
 from .null_model import (
     run_collagen_null_model,

@@ -33,7 +33,10 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 from scipy.ndimage import (
-    binary_closing, binary_fill_holes, gaussian_filter, uniform_filter,
+    binary_closing,
+    binary_fill_holes,
+    gaussian_filter,
+    uniform_filter,
 )
 
 from .collagen_field import compute_collagen_field
@@ -384,8 +387,9 @@ def analyze_gel_series(
     is written per frame using the histology visualiser, so the gels and the
     tissue are drawn the same way.
     """
-    import pandas as pd
     from pathlib import Path
+
+    import pandas as pd
 
     from .io_utils import read_rgb
     from .visualization import save_overlay

@@ -112,7 +112,7 @@ class DefectClassifier:
         }, indent=2), encoding="utf-8")
 
     @classmethod
-    def load(cls, path: str | Path) -> "DefectClassifier":
+    def load(cls, path: str | Path) -> DefectClassifier:
         import joblib
 
         path = Path(path)
@@ -165,7 +165,7 @@ def train_classifier(
     model.fit(matrix, y)
     return DefectClassifier(
         model=model, kind=kind,
-        metadata={"n_train": int(len(y)),
+        metadata={"n_train": len(y),
                   "class_counts": labels.value_counts().to_dict()},
     )
 
@@ -207,7 +207,7 @@ def grouped_cross_validate(
         held_out_image = groups.iloc[test_index].iloc[0]
         fold_scores.append({
             "held_out_image": held_out_image,
-            "n": int(len(test_index)),
+            "n": len(test_index),
             "accuracy": float((fold_pred == y[test_index]).mean()),
         })
 
@@ -224,6 +224,6 @@ def grouped_cross_validate(
         "confusion_matrix": matrix_counts,
         "confusion_labels": [CLASSES[i] for i in present],
         "per_image": pd.DataFrame(fold_scores),
-        "n_images": int(len(np.unique(group_values))),
-        "n_candidates": int(len(y)),
+        "n_images": len(np.unique(group_values)),
+        "n_candidates": len(y),
     }

@@ -158,11 +158,11 @@ def run_colocalization(
     score_map = field["order"] if score is None else score
 
     centers = eligible_plaquette_centers(field, tissue_mask, config)
-    n_defects = int(len(defects))
+    n_defects = len(defects)
 
     base = {
         "n_defects": n_defects,
-        "n_eligible_centers": int(len(centers)),
+        "n_eligible_centers": len(centers),
         "n_bootstrap": n_bootstrap,
         "annulus_inner_px": config.colocalization_annulus_inner_frac
         * representative_sigma_px,

@@ -177,7 +177,7 @@ def _cluster_nearby(candidates: pd.DataFrame, config: AnalysisConfig) -> pd.Data
             record = members.iloc[0].to_dict()
             record["x_px"] = float(members["x_px"].mean())
             record["y_px"] = float(members["y_px"].mean())
-            record["n_grid_detections"] = int(len(members))
+            record["n_grid_detections"] = len(members)
             kept.append(record)
 
     return pd.DataFrame(kept).reset_index(drop=True)
@@ -205,7 +205,7 @@ def defect_order_context(
     at_defects = float(np.median(order[ys, xs]))
     in_tissue = float(np.median(order[tissue_mask]))
     return {
-        "n_defects": int(len(defects)),
+        "n_defects": len(defects),
         "order_at_defects": at_defects,
         "order_in_tissue": in_tissue,
         "defects_on_walls": bool(at_defects < in_tissue),

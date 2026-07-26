@@ -24,7 +24,6 @@ internal check: it measures when the integer ring detector reports a genuine
 
 from __future__ import annotations
 
-
 import numpy as np
 import pandas as pd
 
@@ -259,7 +258,7 @@ def integer_charge_sweep(
         rows.append(
             {
                 "core_size_px": float(core),
-                "n_detected": int(len(near)),
+                "n_detected": len(near),
                 "charge_raw_mean": float(near["charge_raw"].mean())
                 if not near.empty else float("nan"),
                 "charge_raw_abs_error": float(

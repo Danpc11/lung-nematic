@@ -89,7 +89,7 @@ def morphometry_summary(objects: pd.DataFrame) -> dict:
     diameter = objects["equivalent_diameter_px"]
     summary = {
         "kind": objects["kind"].iloc[0],
-        "n": int(len(objects)),
+        "n": len(objects),
         "diameter_px_median": float(diameter.median()),
         "diameter_px_iqr": float(diameter.quantile(0.75) - diameter.quantile(0.25)),
         "area_px2_median": float(objects["area_px2"].median()),
@@ -115,7 +115,7 @@ def quantify_morphology(
     """
     from .segmentation import segment_nuclei
 
-    nucleus_labels, nuclei = segment_nuclei(tissue_mask, hed, config)
+    nucleus_labels, _nuclei = segment_nuclei(tissue_mask, hed, config)
     nucleus_objects = measure_objects(nucleus_labels, "nucleus", microns_per_pixel)
 
     result = {

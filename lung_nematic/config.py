@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
 import json
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -163,7 +163,7 @@ class AnalysisConfig:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AnalysisConfig":
+    def from_dict(cls, data: dict[str, Any]) -> AnalysisConfig:
         valid_names = {item.name for item in fields(cls)}
         unknown = sorted(set(data) - valid_names)
         if unknown:

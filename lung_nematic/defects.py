@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 import numpy as np
 import pandas as pd
 from scipy.ndimage import distance_transform_edt
@@ -8,7 +7,6 @@ from sklearn.cluster import DBSCAN
 
 from .config import AnalysisConfig
 from .nematic import compute_nematic_field, get_density_threshold
-
 
 DEFECT_COLUMNS = [
     "defect_id",
@@ -284,7 +282,7 @@ def _thin_integer_candidates(
             record["x_px"] = float(members["x_px"].mean())
             record["y_px"] = float(members["y_px"].mean())
             record["charge_raw"] = float(members["charge_raw"].mean())
-            record["n_ring_detections"] = int(len(members))
+            record["n_ring_detections"] = len(members)
             clustered.append(record)
 
     if not clustered:

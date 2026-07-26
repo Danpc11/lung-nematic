@@ -13,8 +13,8 @@ except PackageNotFoundError:  # running from a source tree that is not installed
 
 __all__ = [
     "AnalysisConfig",
-    "load_config",
-    "analyze_image",
-    "analyze_folder",
     "__version__",
+    "analyze_folder",
+    "analyze_image",
+    "load_config",
 ]

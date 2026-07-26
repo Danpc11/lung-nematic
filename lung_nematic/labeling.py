@@ -69,7 +69,7 @@ class LabelingSession:
         ids = []
         for row in self.candidates.itertuples():
             ids.append(
-                f"{int(round(row.x_px))}_{int(round(row.y_px))}_{row.charge:+.1f}"
+                f"{round(row.x_px)}_{round(row.y_px)}_{row.charge:+.1f}"
             )
         return ids
 

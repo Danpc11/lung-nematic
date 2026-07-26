@@ -25,8 +25,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .config import AnalysisConfig
 from .collagen_field import compute_collagen_field
+from .config import AnalysisConfig
 from .defects import cluster_multiscale_defects, single_scale_detections
 from .nematic import compute_nematic_field
 

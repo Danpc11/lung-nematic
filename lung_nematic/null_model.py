@@ -25,11 +25,11 @@ factors trade fidelity for speed.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-import os
 from pathlib import Path
-from typing import Callable, Iterable
 
 import numpy as np
 import pandas as pd
@@ -309,7 +309,7 @@ def run_null_model(
         direction = "equal"
 
     return {
-        "n_oriented_nuclei": int(len(oriented_nuclei)),
+        "n_oriented_nuclei": len(oriented_nuclei),
         "n_permutations": n_permutations,
         "null_mode": mode,
         "null_downsample": prepared["factor"],

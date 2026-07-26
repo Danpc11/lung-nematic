@@ -61,15 +61,15 @@ def summarize_image(
         "microns_per_pixel": microns_per_pixel,
         "tissue_area_px": tissue_area_px,
         "tissue_area_mm2": tissue_area_mm2,
-        "n_nuclei": int(len(nuclei)),
-        "n_oriented_nuclei": int(len(oriented_nuclei)),
+        "n_nuclei": len(nuclei),
+        "n_oriented_nuclei": len(oriented_nuclei),
         "global_nematic_order_S": compute_global_order(
             oriented_nuclei
         ),
         "local_S_q25": quantile_or_nan(0.25),
         "local_S_median": quantile_or_nan(0.50),
         "local_S_q75": quantile_or_nan(0.75),
-        "n_defects_total": int(len(defects)),
+        "n_defects_total": len(defects),
         "n_plus_half": int(
             (defects["charge"] == 0.5).sum()
             if not defects.empty

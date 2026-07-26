@@ -25,7 +25,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-
 # The columns the classifier sees. Kept explicit so a saved model can check it
 # is being given the same features it was trained on.
 FEATURE_COLUMNS = [
@@ -152,7 +151,7 @@ def extract_features(
     frame = pd.DataFrame(rows)
     # a stable id so labels can be joined back even after reordering
     frame["candidate_id"] = [
-        f"{int(round(r.x_px))}_{int(round(r.y_px))}_{r.charge:+.1f}"
+        f"{round(r.x_px)}_{round(r.y_px)}_{r.charge:+.1f}"
         for r in frame.itertuples()
     ]
     return frame
