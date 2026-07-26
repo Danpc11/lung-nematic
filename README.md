@@ -301,9 +301,10 @@ a combined `summary_metrics.csv` and a per-group aggregate.
 ---
 ## Part 2 — Simulation
 
-`simulations/` contains two models and the analysis that joins them. Each has
-its own README with the full model description, parameter provenance and
-caveats.
+`simulations/` contains the mechanism-based models and the analysis that joins
+them: the 2D alveolar model, the focus model, a true-3D prototype, and a
+particle view of the coupled state. Each has its own README with the full model
+description, parameter provenance and caveats.
 
 #### The alveolar model — [`simulations/alveolar/`](simulations/alveolar/README.md)
 
@@ -345,6 +346,33 @@ from simulations.alveolar import AlveolarConfig, run_and_record_coupled
 
 config = AlveolarConfig(total_time_h=17520.0, dt_h=2.0, rate_scale=0.08)
 run_and_record_coupled(config, "results/two_year", frame_every_h=292.0)
+```
+
+Two views build on this model without changing its dynamics. **`particle_render`**
+projects the coupled epithelial/mesenchymal state into a particle picture — AT1
+as broad translucent plates, AT2 as compact cells, fibroblasts as elongated
+rods, alveoli as translucent domes over the stiffness field. It is called 2.5D
+deliberately: the biology still evolves on the validated two-dimensional
+tessellation and the third coordinate is only a stable visual embedding, so the
+numerical model stays auditable. `particle_demo.py` renders an example.
+
+#### The true-3D model — [`simulations/alveolar3d/`](simulations/alveolar3d/README.md)
+
+A separate, genuinely three-dimensional prototype: alveolar centres, epithelial
+positions and normals, fibroblast migration and orientation, neighbour searches
+and respiratory deformation all live in 3D, rather than a display-only z
+coordinate. The default geometry is one central alveolus with six near-touching
+neighbours across a thin 5 µm interstitium, seeded from human morphometry (an
+AT2:AT1 ratio near 1.67, with AT1 drawn as broad plates because one AT1 cell
+covers far more air-facing surface than one AT2). It is a deliberately small
+mechanistic prototype — seven units, not a full acinus — and, like the 2D model,
+a research tool rather than a calibrated clinical predictor.
+
+```python
+from simulations.alveolar3d import Alveolar3DSimulation, accelerated_3d_demo_config
+
+sim = Alveolar3DSimulation(accelerated_3d_demo_config())
+# or run the packaged demo:  python -m simulations.alveolar3d.demo
 ```
 
 #### The focus model — [`simulations/fibrofocus/`](simulations/fibrofocus/README.md)
@@ -435,7 +463,13 @@ simulations/             mechanism-based models
 │   ├── model.py         state machine, surfactant, collapse, induration
 │   ├── mesenchyme.py    confined cells, friction, death, coupled simulation
 │   ├── render.py        frames, GIF and MP4
+│   ├── particle_render.py  2.5D particle view of the coupled state
+│   ├── particle_demo.py    example particle render
 │   └── defect_tracking.py  defect lifetimes and the state around them
+├── alveolar3d/          genuinely three-dimensional prototype
+│   ├── model.py         3D positions, normals, migration, deformation
+│   ├── render.py        3D frames
+│   └── demo.py          command-line demo
 ├── fibrofocus/          standalone focus model
 │   ├── model.py         active rods on a stiffening substrate
 │   ├── bistability.py   reduced equation and the point of no return
