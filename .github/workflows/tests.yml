@@ -50,6 +50,7 @@ jobs:
           python -c "import lung_nematic"
           python -c "import lung_nematic.synthetic"
           python -c "import simulations.alveolar"
+          python -c "import simulations.alveolar3d"
           python -c "import simulations.fibrofocus"
           python -c "import simulations.coupled_analysis"
 
