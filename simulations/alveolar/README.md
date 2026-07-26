@@ -5,6 +5,77 @@ epithelial state machine**. This is the layer that was missing from the
 mesenchymal (fibroblastic focus) simulation — it supplies the lesion that
 starts everything, and the mesenchymal cells that the focus is built from.
 
+## Particle-based 2.5D simulation
+
+`particle_render.py` exposes the coupled model as an explicit multicellular
+scene. Equal-area epithelial segments still carry the biological state, but
+they are aggregated into cell particles: healthy initialization has about 6%
+AT2 surface coverage and about 1.7 AT2 cells per AT1 cell. Every fibroblast or
+myofibroblast is one elongated particle, alveoli are adjacent translucent
+domes, and the matrix stiffness field is rendered below the cells. Cell colours
+change as the underlying state machine differentiates AT2 cells through KRT8+,
+AT1 or the aberrant branch. EMT creates a mesenchymal agent and fibroblastic
+foci emerge from migration, activation and matrix deposition.
+
+Each recorded biological state is expanded into a visible respiratory cycle.
+The local deformation amplitude comes from the same compliance-weighted strain
+field used by the coupled model: healthy alveoli move, stiff alveoli move less,
+and collapsed alveoli stop moving. The footprint stays fixed in the 2D
+histological plane and the volume excursion is represented in dome height.
+
+The third coordinate is a stable visual embedding; dynamics remain on the
+two-dimensional tessellation. It is therefore a 2.5D view, not yet a calibrated
+three-dimensional lung.
+
+Run the accelerated visual demo:
+
+```bash
+pip install -e ".[simulation]"
+python -m simulations.alveolar.particle_demo \
+  --output particle_demo_output \
+  --days 15 \
+  --frame-every-hours 18 \
+  --breathing-frames 6
+```
+
+This writes PNG frames, `alveolar_particles.gif`,
+`alveolar_particles.mp4`, the model/render configuration and a TSV time series.
+If FFmpeg is unavailable, the simulation still writes the GIF, frames and TSV
+and reports that only MP4 was skipped.
+The accelerated preset is for visualization only. Scientific runs should pass
+an explicitly calibrated `AlveolarConfig`:
+
+```python
+from simulations.alveolar import (
+    AlveolarConfig,
+    ParticleRenderConfig,
+    run_and_record_particles,
+)
+
+outputs = run_and_record_particles(
+    AlveolarConfig(total_time_h=24 * 60),
+    "particle_results",
+    frame_every_h=24,
+    breathing_subframes=6,
+    render_config=ParticleRenderConfig(orbit_deg_per_frame=0.8),
+)
+```
+
+### Morphometric targets
+
+- Human stereology found that AT1 cells cover about 93–95% and AT2 cells about
+  5–7% of alveolar surface. An average human alveolus contains about 67 AT2 and
+  40 AT1 cells: [Crapo et al., 1982](https://pubmed.ncbi.nlm.nih.gov/7103258/)
+  and [Stone et al., 1992](https://pubmed.ncbi.nlm.nih.gov/1540387/).
+- Whole healthy human interalveolar septa measure about 12 ± 3 µm, while the
+  interstitial compartment within them is only a small component:
+  [Vasilescu et al., 2020](https://pmc.ncbi.nlm.nih.gov/articles/PMC7311688/).
+  `septal_thickness_um` represents the fibroblast-permitted interstitial band,
+  not the complete epithelial-capillary barrier.
+- Normal tidal breathing is represented with 5% linear distension; published
+  estimates place it around 0–5%:
+  [Roan and Waters, 2011](https://pmc.ncbi.nlm.nih.gov/articles/PMC3213982/).
+
 ```
 simulations/alveolar/
 ├── geometry.py   Voronoi alveoli, septa, epithelial segments
@@ -257,10 +328,11 @@ New parameters: `tidal_strain`, `breaths_per_min`, `strain_protection_strength`,
 
 ## Caveats specific to this stage
 
-- Breathing is quasi-static: the tidal strain *amplitude* is modelled and the
-  cycle rate enters as a multiplier. Individual breaths are not resolved, which
-  is required for a two-year run and is fine for rate-limited processes, but
-  would be wrong for anything depending on waveform or frequency.
+- Biological breathing remains quasi-static: tidal strain *amplitude* is
+  modelled and cycle rate enters as a multiplier. The particle renderer adds a
+  representative respiratory waveform at each saved biological state. This
+  makes ventilation visible without pretending that a multi-day integration
+  resolves every individual breath.
 - Strain is distributed by a local compliance rule, not by solving elasticity.
   There is no shear, no stress at the interface itself, and no septal
   mechanics — so the *pattern* of strain redistribution is right but its
