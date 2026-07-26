@@ -1,5 +1,4 @@
 """Small but genuinely three-dimensional alveolar fibrosis simulation.
-
 Unlike :mod:`simulations.alveolar.particle_render`, this model does not invent a
 display-only z coordinate.  Alveolar centres, epithelial cells, fibroblasts,
 orientations, migration, neighbourhoods and respiratory deformation all live
@@ -101,6 +100,12 @@ class Alveolar3DConfig:
     healthy_tidal_strain: float = 0.05
     overstrain_threshold: float = 0.09
     breaths_per_min: float = 15.0
+    ventilation_mode: str = "volume_controlled"
+    interdependence_strength: float = 0.24
+    directional_bulge_exponent: float = 2.0
+    stress_concentration_gain: float = 1.15
+    strain_dose_recovery_per_day: float = 0.08
+    mechanical_surfactant_loss_per_day: float = 0.035
 
     injury_duration_days: float = 9.0
     at1_damage_per_day: float = 0.010
@@ -157,6 +162,30 @@ class Alveolar3DConfig:
             raise ValueError("kinetic_rate_scale must be positive.")
         if not 0 < self.healthy_tidal_strain < 1:
             raise ValueError("healthy_tidal_strain must lie in (0, 1).")
+        if self.ventilation_mode not in {
+            "volume_controlled",
+            "pressure_controlled",
+        }:
+            raise ValueError(
+                "ventilation_mode must be 'volume_controlled' or "
+                "'pressure_controlled'."
+            )
+        if not 0 <= self.interdependence_strength <= 0.60:
+            raise ValueError(
+                "interdependence_strength must lie between 0 and 0.60."
+            )
+        if self.directional_bulge_exponent < 1:
+            raise ValueError("directional_bulge_exponent must be at least 1.")
+        if self.stress_concentration_gain < 0:
+            raise ValueError("stress_concentration_gain cannot be negative.")
+        if self.strain_dose_recovery_per_day < 0:
+            raise ValueError(
+                "strain_dose_recovery_per_day cannot be negative."
+            )
+        if self.mechanical_surfactant_loss_per_day < 0:
+            raise ValueError(
+                "mechanical_surfactant_loss_per_day cannot be negative."
+            )
         if not 0 < self.collapsed_radius_fraction < 1:
             raise ValueError("collapsed_radius_fraction must lie in (0, 1).")
         if self.max_mesenchymal_cells < self.n_resident_fibroblasts:
@@ -244,8 +273,13 @@ class Alveolar3DSimulation:
             self.n_alveoli,
             cfg.healthy_tidal_strain,
         )
+        self.collapse_load = np.zeros(self.n_alveoli)
+        self.local_septal_strain = self.tidal_strain.copy()
+        self.strain_dose = np.zeros(self.n_alveoli)
         self.time_h = 0.0
         self.mesenchymal_released = 0
+        self._update_tidal_strain()
+        self._update_local_mechanics(0.0)
 
     # --------------------------------------------------------------- geometry
     def _build_neighbour_matrix(self) -> np.ndarray:
@@ -288,12 +322,10 @@ class Alveolar3DSimulation:
     def epithelial_xyz(self, inspiration_fraction: float = 0.0) -> np.ndarray:
         """Actual 3D positions of epithelial cell centres."""
 
-        scale = self.respiratory_scale(inspiration_fraction)
-        radius = self.radius_um * scale
-        return (
-            self.centres[self.epithelial_owner]
-            + self.epithelial_normal
-            * radius[self.epithelial_owner, None]
+        return self.alveolar_surface_xyz(
+            self.epithelial_owner,
+            self.epithelial_normal,
+            inspiration_fraction,
         )
 
     def respiratory_scale(self, inspiration_fraction: float) -> np.ndarray:
@@ -304,6 +336,106 @@ class Alveolar3DSimulation:
         scale[self.alveolar_state != OPEN] = 1.0
         return scale
 
+    def _collapse_fraction(self) -> np.ndarray:
+        fraction = 1.0 - self.radius_um / np.maximum(
+            self.open_radius_um,
+            1e-12,
+        )
+        fraction[self.alveolar_state == OPEN] = 0.0
+        return np.clip(fraction, 0.0, 1.0)
+
+    def surface_radial_factor(
+        self,
+        owner: np.ndarray | int,
+        normals: np.ndarray,
+    ) -> np.ndarray:
+        """Volume-normalised one-sided bulging towards collapsed neighbours.
+
+        The independent alveolar spheres do not share an explicit septal mesh.
+        This reduced mapping approximates parenchymal interdependence: an open
+        unit bulges preferentially into the space vacated by a collapsed direct
+        neighbour, while an equal-volume normalisation prevents the visual
+        deformation from inventing resting air volume.
+        """
+
+        normals = np.asarray(normals, dtype=float)
+        original_shape = normals.shape[:-1]
+        flat_normals = normals.reshape(-1, 3)
+        owners = np.asarray(owner, dtype=int)
+        if owners.ndim == 0:
+            flat_owner = np.full(len(flat_normals), int(owners))
+        else:
+            flat_owner = np.broadcast_to(
+                owners,
+                original_shape,
+            ).reshape(-1)
+        factors = np.ones(len(flat_normals), dtype=float)
+        collapse_fraction = self._collapse_fraction()
+        exponent = self.cfg.directional_bulge_exponent
+        strength = self.cfg.interdependence_strength
+        reference = _fibonacci_sphere(512, phase=0.314)
+
+        for alveolus in np.unique(flat_owner):
+            selected = flat_owner == alveolus
+            if (
+                self.alveolar_state[alveolus] != OPEN
+                or strength <= 0
+            ):
+                continue
+            neighbours = np.flatnonzero(
+                (self.neighbour_matrix[alveolus] > 0)
+                & (collapse_fraction > 0)
+            )
+            if neighbours.size == 0:
+                continue
+
+            directions = (
+                self.centres[neighbours] - self.centres[alveolus]
+            )
+            directions = _normalise(directions)
+            loads = collapse_fraction[neighbours]
+
+            projection = np.maximum(
+                flat_normals[selected] @ directions.T,
+                0.0,
+            )
+            raw = 1.0 + strength * (
+                projection**exponent @ loads
+            )
+
+            reference_projection = np.maximum(
+                reference @ directions.T,
+                0.0,
+            )
+            reference_raw = 1.0 + strength * (
+                reference_projection**exponent @ loads
+            )
+            volume_normalisation = float(
+                np.mean(reference_raw**3) ** (-1.0 / 3.0)
+            )
+            factors[selected] = raw * volume_normalisation
+
+        return factors.reshape(original_shape)
+
+    def alveolar_surface_xyz(
+        self,
+        owner: np.ndarray | int,
+        normals: np.ndarray,
+        inspiration_fraction: float = 0.0,
+    ) -> np.ndarray:
+        """Map unit normals onto the mechanically deformed alveolar surface."""
+
+        normals = np.asarray(normals, dtype=float)
+        owners = np.asarray(owner, dtype=int)
+        if owners.ndim == 0:
+            owners = np.full(normals.shape[:-1], int(owners))
+        else:
+            owners = np.broadcast_to(owners, normals.shape[:-1])
+        factor = self.surface_radial_factor(owners, normals)
+        breathing = self.respiratory_scale(inspiration_fraction)[owners]
+        radius = self.radius_um[owners] * factor * breathing
+        return self.centres[owners] + normals * radius[..., None]
+
     def displayed_fibroblast_xyz(
         self,
         inspiration_fraction: float = 0.0,
@@ -312,11 +444,57 @@ class Alveolar3DSimulation:
 
         if self.fibroblast_xyz.size == 0:
             return self.fibroblast_xyz.copy()
-        centre = self.centres[self.fibroblast_owner]
+        owner = self.fibroblast_owner
+        centre = self.centres[owner]
+        radial = self.fibroblast_xyz - centre
+        radius = np.linalg.norm(radial, axis=1)
+        normals = radial / np.maximum(radius[:, None], 1e-12)
+        deformation = self.surface_radial_factor(owner, normals)
         scale = self.respiratory_scale(inspiration_fraction)[
-            self.fibroblast_owner
+            owner
         ]
-        return centre + (self.fibroblast_xyz - centre) * scale[:, None]
+        open_owner = self.alveolar_state[owner] == OPEN
+        deformation = np.where(open_owner, deformation, 1.0)
+        return (
+            centre
+            + normals
+            * (radius * deformation * scale)[:, None]
+        )
+
+    def epithelial_surface_strain(self) -> np.ndarray:
+        """Directional strain seen by every epithelial cell."""
+
+        owner = self.epithelial_owner
+        normals = self.epithelial_normal
+        strain = self.tidal_strain[owner].copy()
+        collapse_fraction = self._collapse_fraction()
+        exponent = self.cfg.directional_bulge_exponent
+        gain = (
+            self.cfg.stress_concentration_gain
+            * self.cfg.healthy_tidal_strain
+        )
+        for alveolus in range(self.n_alveoli):
+            selected = owner == alveolus
+            if not np.any(selected) or self.alveolar_state[alveolus] != OPEN:
+                continue
+            neighbours = np.flatnonzero(
+                (self.neighbour_matrix[alveolus] > 0)
+                & (collapse_fraction > 0)
+            )
+            if neighbours.size == 0:
+                continue
+            directions = _normalise(
+                self.centres[neighbours] - self.centres[alveolus]
+            )
+            projection = np.maximum(
+                normals[selected] @ directions.T,
+                0.0,
+            )
+            strain[selected] += gain * (
+                projection**exponent @ collapse_fraction[neighbours]
+            )
+        strain[self.alveolar_state[owner] != OPEN] = 0.0
+        return np.clip(strain, 0.0, 0.35)
 
     # --------------------------------------------------------------- seeding
     def _seed_fibroblasts(self) -> None:
@@ -389,7 +567,7 @@ class Alveolar3DSimulation:
         if injury_active:
             damage[injured] *= 5.0
         overstrain = np.clip(
-            self.tidal_strain[owner] - cfg.overstrain_threshold,
+            self.epithelial_surface_strain() - cfg.overstrain_threshold,
             0.0,
             None,
         )
@@ -473,6 +651,9 @@ class Alveolar3DSimulation:
             * target_supply
             * (1.0 - self.surfactant)
             - cfg.surfactant_loss_per_day * self.surfactant
+            - cfg.mechanical_surfactant_loss_per_day
+            * self.strain_dose
+            * self.surfactant
         )
         np.clip(self.surfactant, 0.0, 1.0, out=self.surfactant)
 
@@ -543,13 +724,78 @@ class Alveolar3DSimulation:
         if total <= 0:
             self.tidal_strain[:] = 0.0
             return
-        self.tidal_strain = (
-            cfg.healthy_tidal_strain
-            * compliance
-            * self.n_alveoli
-            / total
-        )
+        if cfg.ventilation_mode == "pressure_controlled":
+            self.tidal_strain = (
+                cfg.healthy_tidal_strain
+                * compliance
+                * cfg.healthy_stiffness_kpa
+            )
+        else:
+            reference_volume = (
+                4.0
+                / 3.0
+                * np.pi
+                * cfg.open_radius_um**3
+            )
+            reference_delta_volume = (
+                self.n_alveoli
+                * reference_volume
+                * ((1.0 + cfg.healthy_tidal_strain) ** 3 - 1.0)
+            )
+            allocated_delta_volume = (
+                reference_delta_volume * compliance / total
+            )
+            resting_volume = (
+                4.0
+                / 3.0
+                * np.pi
+                * np.maximum(self.radius_um, 1e-9) ** 3
+            )
+            self.tidal_strain = np.where(
+                open_mask,
+                (
+                    1.0
+                    + allocated_delta_volume
+                    / np.maximum(resting_volume, 1e-12)
+                )
+                ** (1.0 / 3.0)
+                - 1.0,
+                0.0,
+            )
         np.clip(self.tidal_strain, 0.0, 0.18, out=self.tidal_strain)
+
+    def _update_local_mechanics(self, dt_days: float) -> None:
+        """Update direct-neighbour load, peak septal strain and strain dose."""
+
+        collapse_fraction = self._collapse_fraction()
+        self.collapse_load = self.neighbour_matrix @ collapse_fraction
+        self.local_septal_strain = (
+            self.tidal_strain
+            + self.cfg.stress_concentration_gain
+            * self.cfg.healthy_tidal_strain
+            * self.collapse_load
+        )
+        open_mask = self.alveolar_state == OPEN
+        self.local_septal_strain[~open_mask] = 0.0
+        np.clip(
+            self.local_septal_strain,
+            0.0,
+            0.35,
+            out=self.local_septal_strain,
+        )
+        if dt_days <= 0:
+            return
+        threshold = max(self.cfg.overstrain_threshold, 1e-12)
+        excess = np.maximum(
+            self.local_septal_strain - threshold,
+            0.0,
+        ) / threshold
+        self.strain_dose += dt_days * (
+            excess
+            - self.cfg.strain_dose_recovery_per_day * self.strain_dose
+        )
+        self.strain_dose[~open_mask] = 0.0
+        np.clip(self.strain_dose, 0.0, 5.0, out=self.strain_dose)
 
     # ------------------------------------------------------------ mesenchyme
     def _append_mesenchymal(
@@ -771,9 +1017,11 @@ class Alveolar3DSimulation:
             * self.cfg.kinetic_rate_scale
         )
         self._update_tidal_strain()
+        self._update_local_mechanics(0.0)
         self._update_epithelium(dt_days)
         self._update_signals_and_alveoli(dt_days)
         self._update_tidal_strain()
+        self._update_local_mechanics(dt_days)
         self._update_mesenchyme(dt_days)
         self.time_h += self.cfg.dt_h
 
@@ -816,6 +1064,12 @@ class Alveolar3DSimulation:
             "mean_tidal_strain_open": (
                 float(np.mean(strain_open)) if strain_open.size else 0.0
             ),
+            "ventilation_mode": self.cfg.ventilation_mode,
+            "max_local_septal_strain": float(
+                np.max(self.local_septal_strain)
+            ),
+            "max_collapse_load": float(np.max(self.collapse_load)),
+            "max_strain_dose": float(np.max(self.strain_dose)),
         }
 
 
