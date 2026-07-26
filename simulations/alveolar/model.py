@@ -100,6 +100,14 @@ class AlveolarConfig:
     segment_length_um: float = 12.0
     geometry_jitter: float = 0.18
 
+    # Human stereology: AT1 covers ~93-95% and AT2 ~5-7% of alveolar surface,
+    # while an average alveolus has about 67 AT2 and 40 AT1 cells (Stone et al.,
+    # 1992; PMID 1540387). Surface fractions govern the epithelial state lattice;
+    # the number ratio is used by the particle renderer, where one marker is
+    # one cell rather than one equal-area surface patch.
+    healthy_at2_surface_fraction: float = 0.06
+    healthy_at2_to_at1_number_ratio: float = 67.0 / 40.0
+
     # ---- time ----
     dt_h: float = 0.25
     total_time_h: float = 1440.0        # 60 days
@@ -145,8 +153,11 @@ class AlveolarConfig:
     induration_time_h: float = 240.0          # collapsed this long -> irreversible
 
     # ---- mesenchyme (stage 3): cells confined to interstitium + collapsed space ----
-    mesenchyme_grid_step_um: float = 8.0
-    septal_thickness_um: float = 9.0          # healthy interalveolar septum
+    mesenchyme_grid_step_um: float = 5.0
+    # The whole human interalveolar septum is ~12 +/- 3 um, but its actual
+    # interstitial compartment is much thinner.  This parameter represents the
+    # fibroblast-permitted interstitial band, not the full air-blood barrier.
+    septal_thickness_um: float = 5.0
     septal_thickening_gain: float = 3.0       # how much collagen thickens it
     septal_thickening_rate_per_h: float = 0.01
     n_resident_fibroblasts: int = 260
@@ -188,11 +199,11 @@ class AlveolarConfig:
 
     # ---- breathing (quasi-static: the tidal strain AMPLITUDE is modelled,
     # ---- not individual breaths; cycle rate enters as a rate multiplier) ----
-    tidal_strain: float = 0.10             # mean linear strain at tidal breathing
+    tidal_strain: float = 0.05             # normal linear tidal distension, ~0-5%
     breaths_per_min: float = 15.0
     strain_protection_strength: float = 6.0   # cyclic strain SUPPRESSES activation
     strain_tgfb_gain: float = 0.8             # stretch-activated TGF-beta, x stiffness
-    overstrain_threshold: float = 0.16        # strain above which epithelium is injured
+    overstrain_threshold: float = 0.09        # strain above which epithelium is injured
     overstrain_injury_gain: float = 0.04      # micro-injury rate per unit excess strain
 
     # ---- global clock ----
@@ -224,6 +235,12 @@ class AlveolarConfig:
                 raise ValueError(f"{name} must be non-negative.")
         if self.rate_scale <= 0:
             raise ValueError("rate_scale must be positive.")
+        if not 0 < self.healthy_at2_surface_fraction < 1:
+            raise ValueError("healthy_at2_surface_fraction must lie in (0, 1).")
+        if self.healthy_at2_to_at1_number_ratio <= 0:
+            raise ValueError(
+                "healthy_at2_to_at1_number_ratio must be positive."
+            )
         if not 0 < self.tidal_strain < 1:
             raise ValueError("tidal_strain must lie in (0, 1).")
         if self.overstrain_threshold <= 0:
@@ -274,12 +291,15 @@ class AlveolarSimulation:
         if n_seg == 0 or n_alv == 0:
             raise ValueError("Geometry produced no alveoli; enlarge the domain.")
 
-        # --- epithelium: healthy lung is mostly AT1 by area, AT2 at corners ---
+        # --- epithelium: AT1 ~93% and AT2 ~7% of healthy human surface ---
         self.state = np.full(n_seg, AT1, dtype=np.int8)
-        # AT2 sit at regular intervals along the septa rather than at random,
-        # so no alveolus starts surfactant-poor by chance.
-        stride = 8
-        self.state[np.arange(n_seg) % stride == 0] = AT2
+        n_at2 = max(1, int(round(config.healthy_at2_surface_fraction * n_seg)))
+        # Even spacing prevents chance clusters and keeps the initialization
+        # reproducible.  These are equal-area surface patches; particle number
+        # is reconstructed separately because a single flat AT1 cell spans a
+        # much larger surface than a cuboidal AT2 cell.
+        at2_segments = np.linspace(0, n_seg - 1, n_at2, dtype=int)
+        self.state[np.unique(at2_segments)] = AT2
 
         # --- alveolar state ---
         self.alveolar_state = np.full(n_alv, OPEN, dtype=np.int8)
@@ -453,7 +473,10 @@ class AlveolarSimulation:
         dt = cfg.dt_h
 
         at2_counts = self._alveolar_counts(AT2)
-        reference = np.maximum(self._segments_per_alveolus() * 0.12, 1.0)
+        reference = np.maximum(
+            self._segments_per_alveolus() * cfg.healthy_at2_surface_fraction,
+            1.0,
+        )
         supply = np.clip(at2_counts / reference, 0.0, 1.5)
         closed = self.alveolar_state != OPEN
         supply = np.where(closed, supply * cfg.collapse_surfactant_penalty, supply)
