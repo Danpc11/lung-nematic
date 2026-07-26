@@ -11,9 +11,15 @@ from .model import FocusConfig, FocusSimulation
 from .render import detect_defects, draw_frame, run_and_record
 
 __all__ = [
-    "FocusConfig", "FocusSimulation",
-    "fixed_points", "stiffness_velocity", "integrate_lesion",
-    "scan_two_parameters", "critical_value",
-    "run_and_record", "draw_frame", "detect_defects",
+    "FocusConfig",
+    "FocusSimulation",
+    "critical_value",
+    "detect_defects",
+    "draw_frame",
+    "fixed_points",
+    "integrate_lesion",
+    "run_and_record",
+    "scan_two_parameters",
+    "stiffness_velocity",
 ]
 __version__ = "0.1.0"

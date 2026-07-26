@@ -84,10 +84,9 @@ def fixed_points(cfg: FocusConfig, myo_supply: float = 1.0,
             stable.append(bool(v[index] > v[index + 1]))
 
     # the boundary E = E_healthy is a stable state when dE/dt <= 0 there
-    if not roots or roots[0] > cfg.E_healthy_kPa + 1e-9:
-        if v[0] <= 0:
-            roots.insert(0, float(cfg.E_healthy_kPa))
-            stable.insert(0, True)
+    if (not roots or roots[0] > cfg.E_healthy_kPa + 1e-9) and v[0] <= 0:
+        roots.insert(0, float(cfg.E_healthy_kPa))
+        stable.insert(0, True)
 
     stable_roots = [r for r, s in zip(roots, stable) if s]
     unstable_roots = [r for r, s in zip(roots, stable) if not s]
@@ -116,7 +115,7 @@ def integrate_lesion(cfg: FocusConfig, myo_supply: float = 1.0,
     parameter scans.
     """
     dt = cfg.dt_h if dt_h is None else float(dt_h)
-    n_steps = int(round(cfg.total_time_h / dt))
+    n_steps = round(cfg.total_time_h / dt)
     E = cfg.E_healthy_kPa if E_start is None else float(E_start)
     trace = np.empty(n_steps + 1)
     trace[0] = E

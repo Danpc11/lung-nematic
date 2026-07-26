@@ -162,8 +162,8 @@ class FocusSimulation:
         self.rng = np.random.default_rng(config.seed)
 
         # --- stiffness grid ---
-        self.nx = int(round(config.width_um / config.grid_step_um))
-        self.ny = int(round(config.height_um / config.grid_step_um))
+        self.nx = round(config.width_um / config.grid_step_um)
+        self.ny = round(config.height_um / config.grid_step_um)
         self.E = np.full((self.ny, self.nx), config.E_healthy_kPa, dtype=float)
 
         gy, gx = np.mgrid[0:self.ny, 0:self.nx]
@@ -471,10 +471,10 @@ class FocusSimulation:
             "theta": theta,
         }
 
-    def run(self, record_every_h: float = 4.0, callback=None) -> "FocusSimulation":
+    def run(self, record_every_h: float = 4.0, callback=None) -> FocusSimulation:
         cfg = self.cfg
-        n_steps = int(round(cfg.total_time_h / cfg.dt_h))
-        record_every = max(1, int(round(record_every_h / cfg.dt_h)))
+        n_steps = round(cfg.total_time_h / cfg.dt_h)
+        record_every = max(1, round(record_every_h / cfg.dt_h))
         self.history.append(self.focus_metrics())
         for step_index in range(1, n_steps + 1):
             self.step()

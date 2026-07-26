@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
@@ -260,8 +261,8 @@ def run_and_record(config: FocusConfig, output_dir: str | Path,
     config.to_json(output_dir / "config.json")
 
     sim = FocusSimulation(config)
-    n_steps = int(round(config.total_time_h / config.dt_h))
-    every = max(1, int(round(frame_every_h / config.dt_h)))
+    n_steps = round(config.total_time_h / config.dt_h)
+    every = max(1, round(frame_every_h / config.dt_h))
 
     frame_paths: list[Path] = []
     records: list[dict] = []
