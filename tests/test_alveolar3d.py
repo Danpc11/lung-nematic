@@ -171,3 +171,86 @@ def test_invalid_number_of_alveoli_is_rejected():
 def test_invalid_kinetic_scale_is_rejected():
     with pytest.raises(ValueError):
         replace(Alveolar3DConfig(), kinetic_rate_scale=0.0).validate()
+
+
+def test_presentation_mode_renders_a_png(tmp_path):
+    """The clean illustration style must produce a frame, like the default."""
+    from simulations.alveolar3d.render import draw_3d_frame
+
+    simulation = Alveolar3DSimulation(_small_config())
+    simulation.run()
+    output = tmp_path / "presentation_frame.png"
+    record = draw_3d_frame(
+        simulation,
+        output,
+        render_config=Alveolar3DRenderConfig(
+            presentation=True,
+            figure_width=6.0,
+            figure_height=4.0,
+            dpi=40,
+            sphere_latitudes=7,
+            sphere_longitudes=10,
+            matrix_points_per_alveolus=5,
+        ),
+        frame_index=0,
+    )
+    assert output.is_file()
+    assert output.stat().st_size > 0
+    # the render still returns the metrics record, presentation or not
+    assert "time_d" in record
+
+
+def test_presentation_legend_reflects_state_not_time():
+    """KRT8+ and collagen rows appear only when the model reports them."""
+    import matplotlib
+
+    from simulations.alveolar3d.render import _presentation_legend
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    # healthy state: no transitional cells, no myofibroblasts, baseline matrix
+    healthy = {
+        "frac_KRT8": 0.0, "frac_aberrant": 0.0, "n_myofibroblast": 0,
+        "n_collapsed": 0, "n_indurated": 0, "max_stiffness_kpa": 2.0,
+        "time_d": 0.0,
+    }
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    _presentation_legend(ax, healthy)
+    labels = [t.get_text() for t in ax.get_legend().get_texts()]
+    plt.close(fig)
+    assert not any("KRT8" in label for label in labels)
+    assert not any("Collagen" in label for label in labels)
+    assert not any("Myofibroblast" in label for label in labels)
+
+    # fibrotic state: transitional cells and stiff matrix present
+    fibrotic = {
+        "frac_KRT8": 0.05, "frac_aberrant": 0.02, "n_myofibroblast": 14,
+        "n_collapsed": 1, "n_indurated": 0, "max_stiffness_kpa": 8.0,
+        "time_d": 365.0,
+    }
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    _presentation_legend(ax, fibrotic)
+    labels = [t.get_text() for t in ax.get_legend().get_texts()]
+    plt.close(fig)
+    assert any("KRT8" in label for label in labels)
+    assert any("Collagen" in label for label in labels)
+    assert any("Myofibroblast" in label for label in labels)
+
+
+def test_stage_caption_is_driven_by_state():
+    """A zero-injury state must not be captioned as injured."""
+    from simulations.alveolar3d.render import _stage_caption
+
+    healthy = {
+        "time_d": 0.0, "frac_KRT8": 0.0, "frac_aberrant": 0.0,
+        "n_myofibroblast": 0, "n_collapsed": 0, "n_indurated": 0,
+        "max_stiffness_kpa": 2.0,
+    }
+    assert "healthy" in _stage_caption(healthy)
+
+    # even at a late timestamp, no injury means no injury caption
+    late_but_healthy = dict(healthy, time_d=200.0)
+    caption = _stage_caption(late_but_healthy)
+    assert "injury" not in caption and "focus" not in caption
