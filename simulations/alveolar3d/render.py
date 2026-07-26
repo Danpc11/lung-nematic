@@ -71,6 +71,15 @@ class Alveolar3DRenderConfig:
     show_legend: bool = True
     black_background: bool = True
 
+    # Presentation mode strips the scientific scaffolding (3D axes, panes,
+    # colourbar, multi-line technical title) and shows a clean, solid-shaded
+    # tissue over black with a compact corner legend, closer to a biomedical
+    # illustration. It stays fully deterministic and driven by the model - it is
+    # a display style, not a generative step. The diagnostic look is the default
+    # so nothing downstream changes unless this is turned on.
+    presentation: bool = False
+    presentation_title: str = ""
+
     def validate(self) -> None:
         if self.figure_width <= 0 or self.figure_height <= 0:
             raise ValueError("Figure dimensions must be positive.")
@@ -166,6 +175,25 @@ def _draw_alveoli(
             alpha = render.collapsed_alpha
         else:
             alpha = render.indurated_alpha
+
+        if render.presentation:
+            # Solid, shaded shells with a warm septal tint read as tissue rather
+            # than a translucent wireframe. Alpha is raised so the walls have
+            # body; shade=True gives the spheres volume under a light source.
+            presentation_alpha = min(1.0, alpha + 0.32) if state == OPEN else min(1.0, alpha + 0.45)
+            colour = to_rgba(ALVEOLAR_COLOURS[state], presentation_alpha)
+            axis.plot_surface(
+                x,
+                y,
+                z,
+                color=colour,
+                edgecolor="none",
+                antialiased=True,
+                shade=True,
+                zorder=1,
+            )
+            continue
+
         colour = to_rgba(ALVEOLAR_COLOURS[state], alpha)
         axis.plot_surface(
             x,
@@ -425,6 +453,17 @@ def _style_axis(
         elev=render.elevation_deg,
         azim=render.azimuth_deg + render.orbit_deg_per_frame * frame_index,
     )
+
+    if render.presentation:
+        # Strip every piece of scaffolding so only the tissue remains, the way
+        # a biomedical illustration is presented: no axes, ticks, panes or grid.
+        axis.set_axis_off()
+        for pane in (axis.xaxis.pane, axis.yaxis.pane, axis.zaxis.pane):
+            pane.set_facecolor((0, 0, 0, 0))
+            pane.set_edgecolor((0, 0, 0, 0))
+        axis.grid(False)
+        return
+
     axis.set_xlabel("x (µm)", color=foreground, labelpad=7)
     axis.set_ylabel("y (µm)", color=foreground, labelpad=7)
     axis.set_zlabel("z (µm)", color=foreground, labelpad=7)
@@ -497,6 +536,70 @@ def _add_legend(axis) -> None:
     )
 
 
+def _stage_caption(metrics: dict) -> str:
+    """A short stage title in the style of the reference frames.
+
+    Derived from disease time and the tissue state, so it tracks the actual
+    simulation rather than being a fixed label.
+    """
+    days = metrics["time_d"]
+    months = days / 30.4375
+    if days < 1:
+        stage = "healthy alveoli"
+        when = "Day 0"
+    elif months < 12:
+        stage = "early epithelial injury"
+        when = f"Month {months:.0f}"
+    elif metrics.get("n_myofibroblast", 0) < 20:
+        stage = "alveolar collapse"
+        when = f"Year {days / 365.25:.1f}"
+    elif days / 365.25 < 1.75:
+        stage = "fibroblastic focus"
+        when = f"Year {days / 365.25:.1f}"
+    else:
+        stage = "chronic fibroblastic focus"
+        when = f"Year {days / 365.25:.1f}"
+    return f"{when} — {stage}"
+
+
+# Which cell types to list in the presentation legend at each stage, mirroring
+# the reference frames: healthy shows only the resident cells, later stages add
+# the injury and fibrosis markers as they appear.
+def _presentation_legend(axis, metrics: dict) -> None:
+    from matplotlib.patches import Patch
+
+    months = metrics["time_d"] / 30.4375
+    rows = [
+        (EPITHELIAL_COLOURS[AT1], "AT1 — squamous epithelial plate"),
+        (EPITHELIAL_COLOURS[AT2], "AT2 — cuboidal epithelial cell"),
+    ]
+    if months >= 5:
+        rows.append((EPITHELIAL_COLOURS[KRT8], "KRT8+ — transitional epithelial cell"))
+    rows.append(("#7489A6", "Fibroblast — spindle-shaped stromal cell"))
+    if metrics.get("n_myofibroblast", 0) > 0:
+        rows.append(("#E04F2F", "Myofibroblast — contractile stromal cell"))
+        rows.append(("#EF962F", "Collagen — amber fibers"))
+    else:
+        rows.append(("#E1BEB7", "Alveolar septum — pink membrane"))
+
+    handles = [Patch(facecolor=colour, edgecolor="none", label=label)
+               for colour, label in rows]
+    legend = axis.legend(
+        handles=handles,
+        loc="upper left",
+        bbox_to_anchor=(0.01, 0.99),
+        fontsize=9,
+        framealpha=0.55,
+        facecolor="#0A0A0A",
+        edgecolor="#3A3A3A",
+        labelcolor="white",
+        borderpad=0.9,
+        labelspacing=0.6,
+        handlelength=1.1,
+    )
+    legend.set_zorder(20)
+
+
 def draw_3d_frame(
     simulation: Alveolar3DSimulation,
     output_path: str | Path,
@@ -531,42 +634,61 @@ def draw_3d_frame(
     _draw_mesenchyme(axis, simulation, render, breath)
     _style_axis(axis, simulation, render, frame_index)
     if render.show_legend:
-        _add_legend(axis)
+        if render.presentation:
+            _presentation_legend(axis, simulation.metrics())
+        else:
+            _add_legend(axis)
 
     metrics = simulation.metrics()
-    if metrics["temporal_calibration"] == "human_chronic_disease_scale":
-        clock = f"{format_calendar_time(metrics['time_d'])}  |  chronic calibration"
+
+    if render.presentation:
+        # A single clean caption instead of the technical multi-line readout.
+        # Caller can supply an explicit stage title; otherwise derive a short one.
+        if render.presentation_title:
+            caption = render.presentation_title
+        else:
+            caption = _stage_caption(metrics)
+        figure.text(
+            0.5, 0.055, caption,
+            color=foreground, fontsize=15, ha="center", va="center",
+            fontweight="bold",
+        )
+        # no colourbar, no axes: fill the frame with the tissue
+        figure.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0)
     else:
-        clock = (
-            f"{format_calendar_time(metrics['time_d'])}  |  "
-            f"kinetics {metrics['kinetic_rate_scale']:.2g}x"
+        if metrics["temporal_calibration"] == "human_chronic_disease_scale":
+            clock = f"{format_calendar_time(metrics['time_d'])}  |  chronic calibration"
+        else:
+            clock = (
+                f"{format_calendar_time(metrics['time_d'])}  |  "
+                f"kinetics {metrics['kinetic_rate_scale']:.2g}x"
+            )
+        title = (
+            f"true 3D  |  {clock}  |  "
+            f"breath {breath * 100:.0f}% inspired\n"
+            f"{metrics['n_open']} open, {metrics['n_collapsed']} collapsed, "
+            f"{metrics['n_indurated']} indurated  |  "
+            f"{metrics['n_mesenchymal']} mesenchymal, "
+            f"{metrics['n_myofibroblast']} myofibroblasts\n"
+            f"E max {metrics['max_stiffness_kpa']:.1f} kPa  |  "
+            f"septal strain max "
+            f"{100 * metrics['max_local_septal_strain']:.1f}%"
         )
-    title = (
-        f"true 3D  |  {clock}  |  "
-        f"breath {breath * 100:.0f}% inspired\n"
-        f"{metrics['n_open']} open, {metrics['n_collapsed']} collapsed, "
-        f"{metrics['n_indurated']} indurated  |  "
-        f"{metrics['n_mesenchymal']} mesenchymal, "
-        f"{metrics['n_myofibroblast']} myofibroblasts\n"
-        f"E max {metrics['max_stiffness_kpa']:.1f} kPa  |  "
-        f"septal strain max "
-        f"{100 * metrics['max_local_septal_strain']:.1f}%"
-    )
-    axis.set_title(title, color=foreground, fontsize=11, pad=9)
+        axis.set_title(title, color=foreground, fontsize=11, pad=9)
 
-    if normalise is not None and colourmap is not None:
-        scalar = ScalarMappable(norm=normalise, cmap=colourmap)
-        scalar.set_array([])
-        colourbar = figure.colorbar(
-            scalar,
-            ax=axis,
-            fraction=0.025,
-            pad=0.03,
-        )
-        colourbar.set_label("ECM stiffness (kPa)", color=foreground)
-        colourbar.ax.tick_params(colors=foreground, labelsize=7)
+        if normalise is not None and colourmap is not None:
+            scalar = ScalarMappable(norm=normalise, cmap=colourmap)
+            scalar.set_array([])
+            colourbar = figure.colorbar(
+                scalar,
+                ax=axis,
+                fraction=0.025,
+                pad=0.03,
+            )
+            colourbar.set_label("ECM stiffness (kPa)", color=foreground)
+            colourbar.ax.tick_params(colors=foreground, labelsize=7)
 
-    figure.subplots_adjust(left=0.01, right=0.94, bottom=0.02, top=0.91)
+        figure.subplots_adjust(left=0.01, right=0.94, bottom=0.02, top=0.91)
     figure.savefig(
         output_path,
         dpi=render.dpi,
