@@ -258,7 +258,7 @@ def resolved_defects(
             "mean_density_per_um2": float(mean_density),
             "typical_samples_per_window": typical_n,
             "null_quantile_at_typical_n": null_order_quantile(
-                max(int(round(typical_n)), 1), quantile
+                max(round(typical_n), 1), quantile
             ),
             "median_order_where_significant": float(
                 np.median(field["order"][significant])

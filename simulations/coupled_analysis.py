@@ -87,7 +87,7 @@ class CoupledParameters:
     rate_scale: float = 0.08
 
     @classmethod
-    def from_alveolar(cls, config) -> "CoupledParameters":
+    def from_alveolar(cls, config) -> CoupledParameters:
         """Map an ``AlveolarConfig`` onto the reduced parameters."""
         return cls(
             k_stall=config.krt8_to_aberrant_rate,
@@ -107,7 +107,7 @@ class CoupledParameters:
             rate_scale=config.rate_scale,
         )
 
-    def scaled(self) -> "CoupledParameters":
+    def scaled(self) -> CoupledParameters:
         """Apply the global clock, exactly as the agent model does."""
         if self.rate_scale == 1.0:
             return self
@@ -152,7 +152,7 @@ def integrate(p: CoupledParameters, total_time_h: float = 26280.0,
     q = p.scaled()
     state = (np.array([0.0, 0.0, q.E_healthy_kPa])
              if state0 is None else np.asarray(state0, dtype=float))
-    n_steps = int(round(total_time_h / dt_h))
+    n_steps = round(total_time_h / dt_h)
     trace = np.empty((n_steps + 1, 3))
     trace[0] = state
     for index in range(1, n_steps + 1):
