@@ -15,7 +15,7 @@ from lung_nematic.phase_contrast import analyze_phase_contrast
 
 def _phase_image(shape=(160, 160)) -> np.ndarray:
     image = np.full((*shape, 3), 0.5, dtype=float)
-    yy, xx = np.mgrid[0:80, 0:80]
+    _yy, xx = np.mgrid[0:80, 0:80]
     stripes = 0.5 + 0.5 * np.sin(2 * np.pi * xx / 10.0)
     image[40:120, 40:120] = np.stack([stripes] * 3, axis=-1)
     return image

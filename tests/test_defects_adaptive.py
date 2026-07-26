@@ -223,8 +223,8 @@ def test_null_model_reports_ties_as_equal():
 
 def test_null_model_z_is_nan_when_undefined():
     """Zero null spread with a non-tie observation gives z = NaN, not 0."""
-    from lung_nematic.defects_adaptive import adaptive_null_model
     import lung_nematic.defects_adaptive as module
+    from lung_nematic.defects_adaptive import adaptive_null_model
 
     # force a constant null of 3 while the observed is 0, so std=0 but no tie
     shape = (200, 200)
@@ -295,8 +295,9 @@ def test_null_model_rejects_zero_permutations():
 def test_context_and_null_serialise_to_strict_json():
     """NaN from empty defects / undefined z must serialise as null, not NaN."""
     import json
-    from lung_nematic.io_utils import json_safe
+
     from lung_nematic.defects_adaptive import defect_order_context
+    from lung_nematic.io_utils import json_safe
 
     shape = (100, 100)
     field = {"theta": np.zeros(shape), "order": np.ones(shape), "density": np.ones(shape)}

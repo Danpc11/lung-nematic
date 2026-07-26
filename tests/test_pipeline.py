@@ -1,9 +1,9 @@
 from __future__ import annotations
-from dataclasses import replace
 
 import json
 import subprocess
 import sys
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -96,7 +96,7 @@ def test_uniform_field_has_no_defects():
 
 def test_collagen_uniform_field():
     # Parallel stripes -> single coherent orientation -> no defects.
-    yy, xx = np.mgrid[0:200, 0:200]
+    yy, _xx = np.mgrid[0:200, 0:200]
     eosin = 0.5 + 0.5 * np.sin(2 * np.pi * yy / 10.0)
     mask = _mask((200, 200))
     field = compute_collagen_field(eosin, sigma_px=8.0)
@@ -221,7 +221,7 @@ def test_cli_nuclear_and_strict_json(tmp_path):
     result = subprocess.run(
         [sys.executable, "-m", "lung_nematic", "--input", str(images),
          "--output", str(output), "--field", "nuclear"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stderr
     assert (output / "summary_metrics.csv").exists()
@@ -297,6 +297,7 @@ def test_spiral_angle_aster_and_vortex():
 
 def test_render_defect_map_writes_file(tmp_path):
     import pandas as pd
+
     from lung_nematic.defect_maps import render_defect_map
 
     height = width = 120

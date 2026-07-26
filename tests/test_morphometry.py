@@ -28,7 +28,7 @@ def test_measure_objects_reports_geometry():
     labels = _labelled_disks()
     objects = measure_objects(labels, "nucleus")
     assert len(objects) == 3
-    assert set(["area_px2", "major_axis_px", "equivalent_diameter_px"]).issubset(objects.columns)
+    assert {"area_px2", "major_axis_px", "equivalent_diameter_px"}.issubset(objects.columns)
     # a disk of radius 12 has area ~ pi*144
     assert objects["area_px2"].median() == pytest.approx(np.pi * 144, rel=0.15)
 

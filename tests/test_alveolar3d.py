@@ -9,10 +9,10 @@ from simulations.alveolar3d import (
     AT1,
     AT2,
     COLLAPSED,
+    HUMAN_CHRONIC_RATE_SCALE,
     Alveolar3DConfig,
     Alveolar3DRenderConfig,
     Alveolar3DSimulation,
-    HUMAN_CHRONIC_RATE_SCALE,
     human_chronic_3d_config,
     run_and_record_3d,
 )

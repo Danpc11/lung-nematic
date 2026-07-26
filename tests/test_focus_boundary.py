@@ -139,7 +139,7 @@ def test_planted_half_defect_is_representable(charge):
 
     field = sim.director_field(sigma_um=20.0)
     order = field["order"]
-    ny, nx = order.shape
+    _ny, _nx = order.shape
     ix = int(x0 / config.grid_step_um)
     iy = int(y0 / config.grid_step_um)
 

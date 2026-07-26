@@ -19,15 +19,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from lung_nematic.defect_features import (
-    FEATURE_COLUMNS,
-    extract_features,
-    feature_matrix,
-)
 from lung_nematic.defect_classifier import (
     CLASSES,
     grouped_cross_validate,
     train_classifier,
+)
+from lung_nematic.defect_features import (
+    FEATURE_COLUMNS,
+    extract_features,
+    feature_matrix,
 )
 
 
@@ -136,7 +136,7 @@ def test_grouped_cross_validation_runs_and_holds_images_out():
 
 def test_uncertain_class_is_supported():
     """The three-way label set including 'uncertain' must train without error."""
-    features, labels, groups = _labelled_table()
+    features, labels, _groups = _labelled_table()
     # relabel a slice as uncertain
     labels = labels.copy()
     labels.iloc[:10] = "uncertain"
