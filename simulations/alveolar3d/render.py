@@ -537,50 +537,86 @@ def _add_legend(axis) -> None:
 
 
 def _stage_caption(metrics: dict) -> str:
-    """A short stage title in the style of the reference frames.
+    """A short stage title driven by the tissue state, not the clock.
 
-    Derived from disease time and the tissue state, so it tracks the actual
-    simulation rather than being a fixed label.
+    The stage a viewer reads must match what is actually on screen, so the
+    wording is chosen from the real quantities the model reports - transitional
+    fraction, collapse and induration counts, myofibroblast count and matrix
+    stiffness - with calendar time used only as the timestamp, never to decide
+    the biology. This avoids captions like "Month 0 - early injury" when no
+    injury has occurred yet.
     """
     days = metrics["time_d"]
-    months = days / 30.4375
-    if days < 1:
-        stage = "healthy alveoli"
-        when = "Day 0"
-    elif months < 12:
-        stage = "early epithelial injury"
-        when = f"Month {months:.0f}"
-    elif metrics.get("n_myofibroblast", 0) < 20:
-        stage = "alveolar collapse"
-        when = f"Year {days / 365.25:.1f}"
-    elif days / 365.25 < 1.75:
-        stage = "fibroblastic focus"
-        when = f"Year {days / 365.25:.1f}"
-    else:
+    when = _timestamp(days)
+
+    healthy_stiffness = 2.0
+    stiffened = metrics.get("max_stiffness_kpa", healthy_stiffness) > 3.0
+    has_myofib = metrics.get("n_myofibroblast", 0) > 0
+    has_indurated = metrics.get("n_indurated", 0) > 0
+    has_collapsed = metrics.get("n_collapsed", 0) > 0
+    has_transitional = (
+        metrics.get("frac_KRT8", 0.0) + metrics.get("frac_aberrant", 0.0)
+    ) > 0.01
+
+    if has_indurated and stiffened:
         stage = "chronic fibroblastic focus"
-        when = f"Year {days / 365.25:.1f}"
+    elif has_myofib and stiffened:
+        stage = "fibroblastic focus"
+    elif has_collapsed:
+        stage = "alveolar collapse"
+    elif has_transitional:
+        stage = "early epithelial injury"
+    else:
+        stage = "healthy alveoli"
     return f"{when} — {stage}"
+
+
+def _timestamp(days: float) -> str:
+    """Calendar label for a caption: Day 0, Month N, or Year N.N."""
+    if days < 1.0:
+        return "Day 0"
+    if days < 365.25:
+        return f"Month {days / 30.4375:.0f}"
+    return f"Year {days / 365.25:.1f}"
 
 
 # Which cell types to list in the presentation legend at each stage, mirroring
 # the reference frames: healthy shows only the resident cells, later stages add
 # the injury and fibrosis markers as they appear.
 def _presentation_legend(axis, metrics: dict) -> None:
+    """Legend rows chosen from the real tissue state, not from time.
+
+    A cell type is listed only when the model actually reports it, so the key
+    never claims a population that is not on screen. Colours are taken from the
+    same dictionaries the render uses, so a swatch always matches its object.
+    """
     from matplotlib.patches import Patch
 
-    months = metrics["time_d"] / 30.4375
+    healthy_stiffness = 2.0
     rows = [
         (EPITHELIAL_COLOURS[AT1], "AT1 — squamous epithelial plate"),
         (EPITHELIAL_COLOURS[AT2], "AT2 — cuboidal epithelial cell"),
     ]
-    if months >= 5:
+    # KRT8+ only when transitional cells actually exist
+    if metrics.get("frac_KRT8", 0.0) > 0.0:
         rows.append((EPITHELIAL_COLOURS[KRT8], "KRT8+ — transitional epithelial cell"))
-    rows.append(("#7489A6", "Fibroblast — spindle-shaped stromal cell"))
+    if metrics.get("frac_aberrant", 0.0) > 0.0:
+        rows.append((EPITHELIAL_COLOURS[ABERRANT], "Aberrant basaloid — transitional cell"))
+
+    # fibroblasts are present throughout; myofibroblasts only once they appear
+    rows.append(("#2F80ED", "Fibroblast — spindle-shaped stromal cell"))
     if metrics.get("n_myofibroblast", 0) > 0:
-        rows.append(("#E04F2F", "Myofibroblast — contractile stromal cell"))
-        rows.append(("#EF962F", "Collagen — amber fibers"))
-    else:
-        rows.append(("#E1BEB7", "Alveolar septum — pink membrane"))
+        rows.append(("#FF3B30", "Myofibroblast — contractile stromal cell"))
+    # collagen only when the matrix has actually stiffened past healthy
+    if metrics.get("max_stiffness_kpa", healthy_stiffness) > 3.0:
+        rows.append((ALVEOLAR_COLOURS[COLLAPSED], "Collagen — amber fibers"))
+
+    # alveolar shell rows reflect what is drawn, with the true colours
+    rows.append((ALVEOLAR_COLOURS[OPEN], "Open alveolus — aerated lumen"))
+    if metrics.get("n_collapsed", 0) > 0:
+        rows.append((ALVEOLAR_COLOURS[COLLAPSED], "Collapsed alveolus — lost volume"))
+    if metrics.get("n_indurated", 0) > 0:
+        rows.append((ALVEOLAR_COLOURS[INDURATED], "Indurated alveolus — scarred"))
 
     handles = [Patch(facecolor=colour, edgecolor="none", label=label)
                for colour, label in rows]
