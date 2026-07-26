@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The analysis pipeline (`analyze_image`) now writes its per-image tables -
+  nuclei, defects, raw detections, colocalization null, defect maps and null
+  totals - as TSV rather than CSV, matching the rest of the project's tabular
+  output. (Batch summary and other modules still emit CSV.)
+
+### Fixed
+
+- `analyze_image` validates the required metadata keys (`image_id`, `group`,
+  `filename`) up front, so a missing key raises a clear error before
+  segmentation and detection run rather than a bare `KeyError` deep in the call.
+- The representative-scale lookup raises an explanatory error if the config
+  sigmas and the computed field scales drift out of sync, instead of a bare
+  `KeyError`.
+
 ### Added
 
 - `simulations/alveolar3d/`: a genuinely three-dimensional alveolar fibrosis
