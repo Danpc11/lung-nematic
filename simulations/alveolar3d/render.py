@@ -113,6 +113,37 @@ def _sphere_mesh(
     return x, y, z
 
 
+def _alveolar_mesh(
+    simulation: Alveolar3DSimulation,
+    alveolus: int,
+    render: Alveolar3DRenderConfig,
+    breath: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Surface mesh after breathing and directional interdependence."""
+
+    longitude = np.linspace(
+        0.0,
+        2.0 * np.pi,
+        render.sphere_longitudes,
+    )
+    latitude = np.linspace(0.0, np.pi, render.sphere_latitudes)
+    lon, lat = np.meshgrid(longitude, latitude)
+    normals = np.stack(
+        [
+            np.sin(lat) * np.cos(lon),
+            np.sin(lat) * np.sin(lon),
+            np.cos(lat),
+        ],
+        axis=-1,
+    )
+    xyz = simulation.alveolar_surface_xyz(
+        alveolus,
+        normals,
+        breath,
+    )
+    return xyz[..., 0], xyz[..., 1], xyz[..., 2]
+
+
 def _draw_alveoli(
     axis,
     simulation: Alveolar3DSimulation,
@@ -121,14 +152,13 @@ def _draw_alveoli(
 ) -> None:
     from matplotlib.colors import to_rgba
 
-    scale = simulation.respiratory_scale(breath)
     for index in range(simulation.n_alveoli):
         state = int(simulation.alveolar_state[index])
-        radius = simulation.radius_um[index] * scale[index]
-        x, y, z = _sphere_mesh(
-            simulation.centres[index],
-            float(radius),
+        x, y, z = _alveolar_mesh(
+            simulation,
+            index,
             render,
+            breath,
         )
         if state == OPEN:
             alpha = render.open_alpha
@@ -182,10 +212,12 @@ def _draw_epithelium(
     normals = simulation.epithelial_normal
     owner = simulation.epithelial_owner
     respiratory_scale = simulation.respiratory_scale(breath)
+    surface_factor = simulation.surface_radial_factor(owner, normals)
     alveolar_linear_scale = (
         simulation.radius_um[owner]
         / simulation.open_radius_um[owner]
         * respiratory_scale[owner]
+        * np.sqrt(surface_factor)
     )
 
     # AT1 cells are thin, broad plates; AT2 cells are compact and cuboidal.
@@ -378,8 +410,8 @@ def _style_axis(
     background = "#000000" if render.black_background else "#FFFFFF"
     axis.set_facecolor(background)
     radius = simulation.cfg.open_radius_um
-    lower = simulation.centres.min(axis=0) - 1.18 * radius
-    upper = simulation.centres.max(axis=0) + 1.18 * radius
+    lower = simulation.centres.min(axis=0) - 1.30 * radius
+    upper = simulation.centres.max(axis=0) + 1.30 * radius
     spans = upper - lower
     maximum = float(np.max(spans))
     midpoint = 0.5 * (upper + lower)
@@ -515,8 +547,10 @@ def draw_3d_frame(
         f"{metrics['n_open']} open, {metrics['n_collapsed']} collapsed, "
         f"{metrics['n_indurated']} indurated  |  "
         f"{metrics['n_mesenchymal']} mesenchymal, "
-        f"{metrics['n_myofibroblast']} myofibroblasts  |  "
-        f"E max {metrics['max_stiffness_kpa']:.1f} kPa"
+        f"{metrics['n_myofibroblast']} myofibroblasts\n"
+        f"E max {metrics['max_stiffness_kpa']:.1f} kPa  |  "
+        f"septal strain max "
+        f"{100 * metrics['max_local_septal_strain']:.1f}%"
     )
     axis.set_title(title, color=foreground, fontsize=11, pad=9)
 
