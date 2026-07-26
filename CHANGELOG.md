@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `simulations/alveolar3d/`: a genuinely three-dimensional alveolar fibrosis
+  prototype (3D positions, surface normals, migration, neighbour searches and
+  respiratory deformation), seeded from human morphometry. Small by design —
+  seven near-touching units — and a research prototype, not a calibrated
+  predictor.
+- `simulations/alveolar/particle_render.py`: a 2.5D particle view of the coupled
+  epithelial/mesenchymal state, with a `particle_demo.py` example. The biology
+  still evolves on the validated 2D tessellation; the third coordinate is a
+  visual embedding only.
+
 ## [0.2.0]
 
 Adaptive-radius defect detection, cell and nucleus morphometry, and a set of
