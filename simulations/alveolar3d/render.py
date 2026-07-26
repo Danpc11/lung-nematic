@@ -64,7 +64,6 @@ class Alveolar3DRenderConfig:
     open_alpha: float = 0.055
     collapsed_alpha: float = 0.19
     indurated_alpha: float = 0.24
-    epithelial_marker_size: float = 24.0
     fibroblast_linewidth: float = 1.5
     fibroblast_marker_size: float = 7.0
     matrix_points_per_alveolus: int = 80
