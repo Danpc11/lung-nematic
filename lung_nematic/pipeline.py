@@ -35,6 +35,27 @@ def _safe_identifier(value: object) -> str:
     return text
 
 
+_REQUIRED_METADATA_KEYS = ("image_id", "group", "filename")
+
+
+def _require_metadata(metadata: dict) -> None:
+    """Fail fast if metadata is missing a key the pipeline needs.
+
+    ``analyze_image`` is the shared engine for the CLI and the notebook, and the
+    notebook may build metadata by hand. Checking the required keys up front
+    turns a late ``KeyError`` - raised only after segmentation and detection
+    have already run - into a clear error before any expensive work.
+    """
+    missing = [key for key in _REQUIRED_METADATA_KEYS if key not in metadata]
+    if missing:
+        raise KeyError(
+            "metadata is missing required key(s): " + ", ".join(missing)
+        )
+
+
+def _write_table(frame: pd.DataFrame, path: Path) -> None:
+    """Write a dataframe as TSV. TSV is the project's tabular format."""
+    frame.to_csv(path, sep="\t", index=False)
 
 
 def _detect_for_field(
@@ -75,6 +96,7 @@ def analyze_image(
     interfaces use.
     """
     config.validate()
+    _require_metadata(metadata)
 
     field_type = config.field_type if field_type is None else field_type
     run_null = config.run_null if run_null is None else run_null
@@ -100,6 +122,16 @@ def analyze_image(
     )
 
     representative_sigma = float(config.sigmas_px[len(config.sigmas_px) // 2])
+    # fields is keyed by the sigmas the detector actually used; guard against a
+    # drift between config sigmas and field keys (e.g. float rounding) so the
+    # failure is a clear message rather than a bare KeyError deep in the run
+    if representative_sigma not in fields:
+        available = ", ".join(f"{key:g}" for key in sorted(fields))
+        raise KeyError(
+            f"representative sigma {representative_sigma:g} is not among the "
+            f"computed field scales ({available}); config.sigmas_px and the "
+            "detector's scales are out of sync"
+        )
     field = fields[representative_sigma]
 
     safe_id = _safe_identifier(metadata["image_id"])
@@ -110,17 +142,18 @@ def analyze_image(
     nuclei_export = nuclei.copy()
     nuclei_export.insert(0, "image_id", metadata["image_id"])
     nuclei_export.insert(1, "group", metadata["group"])
-    nuclei_export.to_csv(image_output / f"{safe_id}_nuclei.csv", index=False)
+    _write_table(nuclei_export, image_output / f"{safe_id}_nuclei.tsv")
 
     defects_export = defects.copy()
     defects_export.insert(0, "image_id", metadata["image_id"])
     defects_export.insert(1, "group", metadata["group"])
     defects_export.insert(2, "field", field_type)
-    defects_export.to_csv(image_output / f"{tag}_defects.csv", index=False)
+    _write_table(defects_export, image_output / f"{tag}_defects.tsv")
 
     if not raw_detections.empty:
-        raw_detections.to_csv(
-            image_output / f"{tag}_raw_defect_detections.csv", index=False
+        _write_table(
+            raw_detections,
+            image_output / f"{tag}_raw_defect_detections.tsv",
         )
 
     overlay_path = image_output / f"{tag}_overlay.png"
@@ -169,10 +202,13 @@ def analyze_image(
             representative_sigma_px=representative_sigma,
             n_bootstrap=config.n_bootstrap, seed=config.random_seed,
         )
-        pd.DataFrame({
-            "core_null": coloc["core_null"],
-            "annulus_null": coloc["annulus_null"],
-        }).to_csv(image_output / f"{tag}_colocalization_null.csv", index=False)
+        _write_table(
+            pd.DataFrame({
+                "core_null": coloc["core_null"],
+                "annulus_null": coloc["annulus_null"],
+            }),
+            image_output / f"{tag}_colocalization_null.tsv",
+        )
         for key, value in coloc.items():
             if key.endswith("_null"):
                 continue
@@ -195,9 +231,7 @@ def analyze_image(
             integer_field=integer_field,
         )
         if not maps.empty:
-            maps.to_csv(
-                image_output / f"{tag}_defect_maps.csv", index=False
-            )
+            _write_table(maps, image_output / f"{tag}_defect_maps.tsv")
 
     with (image_output / f"{tag}_summary.json").open(
         "w", encoding="utf-8"
@@ -237,8 +271,9 @@ def _run_null(
     save_null_histogram(
         result, image_output / f"{tag}_null_hist.png", title=tag
     )
-    pd.DataFrame({"null_total": result["null_totals"]}).to_csv(
-        image_output / f"{tag}_null_totals.csv", index=False
+    _write_table(
+        pd.DataFrame({"null_total": result["null_totals"]}),
+        image_output / f"{tag}_null_totals.tsv",
     )
     summary_keys = {}
     for key, value in result.items():
