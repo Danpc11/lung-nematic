@@ -6,6 +6,7 @@
 [![Defect labelling](https://img.shields.io/badge/Colab-Defect%20labelling-34A853?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/defect_labelling_colab.ipynb)
 [![Alveolar IPF simulation](https://img.shields.io/badge/Colab-Alveolar%20IPF%20simulation-F9AB00?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/ipf_simulation_colab.ipynb)
 [![Fibrofocus simulation](https://img.shields.io/badge/Colab-Fibrofocus%20simulation-EA4335?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/fibrofocus_colab.ipynb)
+[![3D alveolar prototype](https://img.shields.io/badge/Colab-3D%20alveolar%20prototype-9334E6?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/alveolar3d_colab.ipynb)
 
 Nematic order in fibrotic lung, approached from two directions:
 
@@ -74,11 +75,15 @@ pip install -e .
 
 Installing also registers a `lung-nematic` console command, ships the default
 analysis configuration, and installs both `lung_nematic` and `simulations`.
-Simulation video export additionally needs:
+Simulation video export and the notebook figures additionally need the
+`simulation` extra:
 
 ```bash
-pip install imageio imageio-ffmpeg seaborn
+pip install -e ".[simulation]"
 ```
+
+This pulls in `imageio`, `imageio-ffmpeg` and `seaborn`. Only the notebooks and
+video rendering require them; the core analysis pipeline does not.
 
 The Colab simulation notebook installs those runtime extras automatically.
 
@@ -484,9 +489,10 @@ lung_nematic_colab.ipynb    histology analysis front-end
 defect_labelling_colab.ipynb interactive labelling and classifier training
 ipf_simulation_colab.ipynb  alveolar (coupled) simulation front-end
 fibrofocus_colab.ipynb      focus model: separatrix, phase diagram, defects
+alveolar3d_colab.ipynb      true-3D alveolar prototype front-end
 ```
 
-The two simulation models live in separate subpackages because each defines a
+The simulation models live in separate subpackages because each defines a
 `model.py` and a `render.py`; flattening them silently overwrites files.
 
 ---
@@ -556,8 +562,12 @@ depletion.
 
 #### Simulation
 
-- Two-dimensional throughout. Real alveoli are 3D polyhedra sharing septa with
-  many neighbours; this is a section through that structure.
+- The main alveolar model is two-dimensional (the particle view adds a 2.5D
+  visual embedding, not 2.5D dynamics). Real alveoli are 3D polyhedra sharing
+  septa with many neighbours; the 2D model is a section through that structure.
+  A separate genuinely three-dimensional prototype lives in
+  [`simulations/alveolar3d/`](simulations/alveolar3d/README.md) — small (seven
+  units) and not a replacement for the calibrated 2D model.
 - Alveolar collapse rescales a radius rather than relaxing septal mechanics, so
   the geometry of a collapsed alveolus is schematic.
 - Breathing is quasi-static: the tidal strain *amplitude* is modelled and the
