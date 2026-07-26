@@ -1,30 +1,37 @@
 # simulations
 
-Two models of pulmonary fibrosis, plus the analysis that joins them. They live
-in separate subpackages because each defines a `model.py` and a `render.py`, and
-flattening them silently overwrites files.
+Mechanism-based models of pulmonary fibrosis, plus the analysis that joins them.
+They live in separate subpackages because each defines a `model.py` and a
+`render.py`, and flattening them silently overwrites files.
 
 ```
 simulations/
 ├── alveolar/            alveolar architecture, epithelial state machine,
-│                        breathing, coupled mesenchyme, defect tracking
+│                        breathing, coupled mesenchyme, defect tracking;
+│                        particle_render.py adds a 2.5D particle view
+├── alveolar3d/          genuinely three-dimensional prototype (positions,
+│                        normals, migration and deformation all in 3D)
 ├── fibrofocus/          standalone fibroblastic-focus model and its
 │                        bistability analysis of the point of no return
 ├── coupled_analysis.py  joins the epithelial and matrix bistabilities
+├── nematic_resolution.py  adaptive window + per-window counting-noise null
 └── configs/             parameter sets that reproduce specific runs
 ```
 
 Each subpackage has its own README with the model description, parameter
 provenance and caveats. Start there:
 
-- [`alveolar/README.md`](alveolar/README.md) — the main model, built in six
+- [`alveolar/README.md`](alveolar/README.md) — the main 2D model, built in six
   stages, including two results that are negative and one bug worth knowing
   about.
+- [`alveolar3d/README.md`](alveolar3d/README.md) — the small true-3D prototype,
+  seeded from human morphometry.
 - [`fibrofocus/README.md`](fibrofocus/README.md) — the standalone focus model
   and the reduced equation that locates the point of no return.
 
 ```python
 from simulations.alveolar import AlveolarConfig, run_and_record_coupled
+from simulations.alveolar3d import Alveolar3DSimulation, accelerated_3d_demo_config
 from simulations.fibrofocus import FocusConfig, critical_value
 from simulations.coupled_analysis import CoupledParameters, loop_interruption_test
 ```
