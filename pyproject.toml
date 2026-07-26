@@ -19,6 +19,12 @@ dependencies = [
     "tqdm>=4.66",
 ]
 
+[project.optional-dependencies]
+simulation = [
+    "imageio>=2.31",
+    "imageio-ffmpeg>=0.4.9",
+]
+
 [project.scripts]
 lung-nematic = "lung_nematic.cli:main"
 
