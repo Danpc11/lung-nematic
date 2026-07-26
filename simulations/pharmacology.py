@@ -193,10 +193,10 @@ def score(panel: pd.DataFrame) -> dict:
     scored = panel.loc[panel["expected"] != "-"]
     failures = scored.loc[scored["expected"] == "fails"]
     return {
-        "n_controls": int(len(scored)),
+        "n_controls": len(scored),
         "n_agree": int(scored["agrees"].sum()),
         "clinical_failures_reproduced": int(failures["agrees"].sum()),
-        "clinical_failures_total": int(len(failures)),
+        "clinical_failures_total": len(failures),
         "passes_discriminating_test": bool(failures["agrees"].all()),
     }
 
@@ -235,7 +235,7 @@ class MaturationParameters:
 
 def integrate_with_maturation(
     parameters: CoupledParameters,
-    maturation: MaturationParameters = MaturationParameters(),
+    maturation: MaturationParameters | None = None,
     total_time_h: float = 26280.0,
     dt_h: float = 2.0,
     treated: CoupledParameters | None = None,
@@ -258,9 +258,11 @@ def integrate_with_maturation(
     scale = parameters.rate_scale
     active_maturation = treated_maturation or maturation
 
+    if maturation is None:
+        maturation = MaturationParameters()
     A, M = 0.0, 0.0
     new, mature = 0.0, 0.0
-    n_steps = int(round(total_time_h / dt_h))
+    n_steps = round(total_time_h / dt_h)
 
     for index in range(1, n_steps + 1):
         time_h = index * dt_h
@@ -303,7 +305,7 @@ LOXL2_MATURATION_EFFECT = 0.05      # blocking crosslinking slows maturation
 
 def run_panel_with_maturation(
     parameters: CoupledParameters,
-    maturation: MaturationParameters = MaturationParameters(),
+    maturation: MaturationParameters | None = None,
     interventions: tuple[Intervention, ...] = INTERVENTIONS,
     treatment_start_h: float = 0.0,
     **integrate_kwargs,
@@ -313,6 +315,8 @@ def run_panel_with_maturation(
     ``treatment_start_h = 0`` reproduces a prevention study; a start well after
     the lesion is established reproduces a treatment study.
     """
+    if maturation is None:
+        maturation = MaturationParameters()
     baseline = integrate_with_maturation(parameters, maturation, **integrate_kwargs)
     untreated_E = baseline["E_final_kPa"]
     scaled = parameters.scaled()
