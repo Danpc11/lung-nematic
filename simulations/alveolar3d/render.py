@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -23,7 +23,6 @@ from .model import (
     Alveolar3DConfig,
     Alveolar3DSimulation,
 )
-
 
 EPITHELIAL_COLOURS = {
     AT1: "#2ECC71",
@@ -671,8 +670,8 @@ def run_and_record_3d(
     )
 
     simulation = Alveolar3DSimulation(config)
-    total_steps = int(round(config.total_time_h / config.dt_h))
-    every = max(1, int(round(state_every_h / config.dt_h)))
+    total_steps = round(config.total_time_h / config.dt_h)
+    every = max(1, round(state_every_h / config.dt_h))
     frame_paths: list[Path] = []
     records: list[dict] = []
 
@@ -721,7 +720,7 @@ def run_and_record_3d(
                 fps,
             )
             outputs["mp4"] = str(mp4_path)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - encoder can fail many ways; clean up and continue
             if mp4_path.exists():
                 mp4_path.unlink()
             outputs["mp4_error"] = (

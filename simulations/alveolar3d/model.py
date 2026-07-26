@@ -13,13 +13,12 @@ mechanistic research prototype, not a calibrated clinical predictor.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
 import json
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 import numpy as np
 from scipy.spatial import cKDTree
-
 
 EMPTY, AT1, AT2, KRT8, ABERRANT = 0, 1, 2, 3, 4
 OPEN, COLLAPSED, INDURATED = 0, 1, 2
@@ -345,7 +344,7 @@ class Alveolar3DSimulation:
     # --------------------------------------------------------------- readouts
     @property
     def n_mesenchymal(self) -> int:
-        return int(len(self.fibroblast_xyz))
+        return len(self.fibroblast_xyz)
 
     @property
     def n_myofibroblast(self) -> int:
@@ -778,8 +777,8 @@ class Alveolar3DSimulation:
         self._update_mesenchyme(dt_days)
         self.time_h += self.cfg.dt_h
 
-    def run(self) -> "Alveolar3DSimulation":
-        steps = int(round(self.cfg.total_time_h / self.cfg.dt_h))
+    def run(self) -> Alveolar3DSimulation:
+        steps = round(self.cfg.total_time_h / self.cfg.dt_h)
         for _ in range(steps):
             self.step()
         return self

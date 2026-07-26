@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
 import json
+from dataclasses import replace
 
 from .model import accelerated_3d_demo_config, human_chronic_3d_config
 from .render import Alveolar3DRenderConfig, run_and_record_3d
