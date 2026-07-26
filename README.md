@@ -588,7 +588,7 @@ depletion.
 ---
 ### Version history
 
-See [`CHANGELOG.md`](CHANGELOG.md). Current release: 0.2.0.
+See [`CHANGELOG.md`](CHANGELOG.md).
 
 ### Citation
 
