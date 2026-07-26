@@ -9,6 +9,10 @@ from .model import (
     STATE_NAMES, AlveolarConfig, AlveolarSimulation,
 )
 from .mesenchyme import CoupledSimulation, MesenchymeLayer
+from .particle_render import (
+    ParticleRenderConfig, ParticleSnapshot, accelerated_particle_demo_config,
+    build_particle_snapshot, draw_particle_frame, run_and_record_particles,
+)
 from .render import (
     draw_coupled_frame, draw_frame, run_and_record, run_and_record_coupled,
 )
@@ -20,6 +24,9 @@ __all__ = [
     "AT1", "AT2", "KRT8", "ABERRANT", "EMPTY",
     "OPEN", "COLLAPSED", "INDURATED", "STATE_NAMES",
     "CoupledSimulation", "MesenchymeLayer",
+    "ParticleRenderConfig", "ParticleSnapshot",
+    "build_particle_snapshot", "draw_particle_frame",
+    "run_and_record_particles", "accelerated_particle_demo_config",
     "run_and_record", "draw_frame",
     "run_and_record_coupled", "draw_coupled_frame",
 ]
