@@ -588,6 +588,23 @@ depletion.
   result, not its position.
 - Drug controls in the Colab notebook are a separate reduced-model protocol;
   they do not continue from the final spatial configuration of the agent run.
+---
+## Reference frames
+
+<p align="center">
+  <img
+    src="assets/reference_frames.gif"
+    width="900"
+    alt="Reference frames showing healthy alveoli, early epithelial injury, alveolar collapse and fibroblastic-focus progression"
+  >
+</p>
+
+<p align="center">
+  <sub>
+    Day 0 — healthy · Month 6 — early injury · Year 1 — collapse ·
+    Year 1.5 — fibroblastic focus · Year 2 — chronic focus
+  </sub>
+</p>
 
 ---
 ### Version history
