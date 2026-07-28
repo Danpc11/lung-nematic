@@ -43,7 +43,7 @@ jobs:
       - name: Build animated GIF
         run: |
           ffmpeg -y \
-            -framerate 0.25 \
+            -framerate 2 \
             -pattern_type glob \
             -i 'assets/0*_labeled_en.png' \
             -filter_complex \
@@ -61,6 +61,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "The GIF is already up to date."
           else
-            git commit -m "Add animated reference-frame carousel"
+            git commit -m "Update animated reference-frame carousel"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
