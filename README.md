@@ -21,6 +21,10 @@ Nematic order in fibrotic lung, approached from two directions:
 The two are meant to constrain each other: the simulation is analysed with the
 same winding criterion the histology pipeline uses, so defect densities are
 comparable once expressed in the same physical units.
+---
+## Workflow
+
+![lung-nematic repository workflow](assets/lung-nematic-workflow.png)
 
 ---
 ## Part 1 — Analysis of histology
