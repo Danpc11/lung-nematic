@@ -100,8 +100,11 @@ lung-nematic --input path/to/images --output path/to/results
 ```
 
 `--input` is a folder of images (`.jpg`, `.png`, `.tif`, ...). Results are
-written per image under `--output`, plus a `summary_metrics.csv` and a per-group
-aggregate. `--config` is optional (the packaged default is used otherwise). An
+written per image under `--output`, plus a `summary_metrics_<field>.csv`, a
+combined `summary_metrics.csv` rebuilt from every per-field file present, and a
+per-group aggregate keyed by field and group. `--output` may not be `--input`;
+if it is nested inside `--input` it is excluded from image discovery, so
+generated overlays are never re-analysed as histology on a later run. `--config` is optional (the packaged default is used otherwise). An
 optional `--metadata` CSV (see `metadata_template.csv`) supplies
 `microns_per_pixel` and grouping, and matches rows by `filename` or
 `relative_path`; a missing metadata path is an error rather than silently
