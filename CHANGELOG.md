@@ -6,7 +6,60 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Output no longer re-enters as input.** `discover_images` accepts
+  `exclude_dirs`, and `analyze_folder` rejects `output_dir == input_dir` and
+  excludes the output subtree from discovery. Previously, placing `--output`
+  inside `--input` meant a second run picked up the first run's overlays,
+  diagnostic panels and defect maps as histology. Those images do not fail -
+  annotations are burned into the raster, so tissue segmentation succeeds - so
+  the run produced plausible metrics from synthetic inputs with no warning.
+  Covered by `tests/test_output_isolation.py`, which runs the same batch twice
+  over a nested output directory and asserts the two summaries are identical.
+- **`image_id` uniqueness is enforced on the normalized name.** The duplicate
+  check ran on the raw identifier, but `_safe_identifier` then folded `/`, `\`,
+  `:` and spaces to `_`, so `case/01` and `case_01` passed the check and wrote
+  into the same directory. The normalization now lives in
+  `io_utils.safe_identifier` (single definition, imported by both `batch` and
+  `pipeline`) and `analyze_folder` checks uniqueness on its output.
+- **Reserved `image_id` values are rejected rather than normalized.** An
+  `image_id` of `..` made `output_root / safe_id` resolve to the *parent* of the
+  output root, scattering per-image results outside it; `""` and `"."` resolved
+  to the output root itself. These now raise before any image is processed.
+  Trailing dots are also stripped, since NTFS drops them silently and `case01.`
+  and `case01` would otherwise be one directory on Windows and two elsewhere.
+- **Permutation nulls are seeded per image, not per batch.** Every image was
+  seeded with `config.random_seed`, which is reproducible but leaves the
+  permutation streams identical across images. That dependence is invisible in a
+  per-image p-value and only matters when p-values are combined across a cohort.
+  `io_utils.derived_seed(base, image_id, field_type)` (CRC32-based, so stable
+  across processes) now supplies a distinct stream per image and field, and the
+  value used is recorded as `random_seed_used` in the summary. **This changes
+  null-model and colocalization numbers relative to earlier runs**; point
+  estimates are unaffected.
+
 ### Changed
+
+- **`defect_density_mm2` now counts half-integer defects only.** It was
+  `len(defects) / area`, pooling the half-integer (plaquette winding) and
+  integer (N-point ring) layers, which have different spatial support and
+  sensitivity. The column therefore meant different things depending on whether
+  `detect_integer_defects` was set, and runs with and without the flag were not
+  comparable under the same name. `defect_density_integer_mm2` and
+  `defect_density_all_mm2` (the previous quantity) are reported separately, with
+  the integer density as NaN - not zero - when the layer was not run, so "not
+  measured" stays distinguishable from "measured, none found". New companion
+  counts: `n_half_total`, `n_integer_total`, `detect_integer_defects`.
+- **Batch reports are per-field and additive.** `analyze_folder` writes
+  `summary_metrics_<field>.csv` and `processing_errors_<field>.csv`, then
+  rebuilds the combined `summary_metrics.csv` / `processing_errors.csv` from
+  every per-field file present. Running the CLI twice over one output directory
+  with different `--field` values previously left per-image directories holding
+  both fields while the batch summary described only the last, with no marker of
+  the overwrite. `summarize_by_group` keys on `field_type` as well as `group`
+  when the column is present, so nuclear and collagen measurements are never
+  averaged into one row.
 
 - The analysis pipeline (`analyze_image`) now writes its per-image tables -
   nuclei, defects, raw detections, colocalization null, defect maps and null
