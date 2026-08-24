@@ -1,12 +1,36 @@
 # lungtwin
 
-Identifiability analysis for a low-dimensional IPF digital twin.
+Local sensitivity rank analysis and precision bounds for a low-dimensional IPF
+digital twin. Ships as part of the `lung-nematic` distribution.
 
 This package is deliberately **not** an estimator. It answers what can be
 estimated from a given study design, before any estimator exists. The reason is
-that a fit to a structurally unidentifiable model does not fail loudly — the
-optimiser returns whatever point the initialisation drifted to, the residuals
-look fine, and the result is indistinguishable from an estimate.
+that a fit along a locally flat direction does not fail loudly — the optimiser
+returns whatever point the initialisation drifted to, the residuals look fine,
+and the result is indistinguishable from an estimate.
+
+## Scope of the claims
+
+Everything here is computed from the sensitivity matrix of the observations with
+respect to the free parameters, evaluated by finite differences **at one nominal
+parameter point**. That is a *local* analysis:
+
+- Full rank at a point establishes **local** identifiability there. It is not
+  proof of global structural identifiability — discrete symmetries, disconnected
+  solution branches, and rank collapse elsewhere in parameter space are all
+  invisible to a single-point Jacobian. Proving the global claim needs symbolic
+  work: differential algebra, a full observability rank condition, or exhaustive
+  profiling from multiple starts. This package does none of that, and the API is
+  named accordingly (`is_locally_identifiable`).
+- A rank deficiency found at a point is evidence of a locally flat direction
+  there, not proof that it is flat everywhere. Some of the deficiencies below
+  *are* exact and global — where treatment status never changes, `β` literally
+  does not appear in the equations — but that is a fact about this model a human
+  checked, not something the rank computation established.
+
+Pass `n_probes` to recompute the rank at perturbed parameter points. A rank
+stable across the plausible region is much stronger evidence than a rank at one
+point, and still short of proof.
 
 ## The reparameterized model
 
@@ -34,8 +58,8 @@ usual intuition.
 
 In the original specification `R` appeared in neither the burden equation nor
 any observation equation. Its sensitivity was identically zero, so `R₀` and `α`
-were structurally unidentifiable and deleting the entire state changed no
-prediction. `ReserveMode` makes the three resolutions explicit:
+were unidentifiable — exactly and globally, not just locally — and deleting the
+entire state changed no prediction. `ReserveMode` makes the three resolutions explicit:
 
 | mode | wiring | consequence |
 |---|---|---|
@@ -60,7 +84,7 @@ confounding by indication.
 | **starts antifibrotic at 6 mo** | **5/5** | — |
 | starts at 6 mo, no DLCO | 3/5 | `{κ}`, `{DLCO₀}` |
 
-**Structural identifiability is not enough.** The switcher design is full rank
+**Full rank is not enough.** The switcher design is full rank
 but its Cramér–Rao bound gives `SE(r_i) = 7.7` against a true value of 5.28 —
 the design cannot distinguish a progressing patient from a stable one.
 
@@ -98,6 +122,7 @@ across patients, not estimated per patient.**
 ## Usage
 
 ```bash
+# From the repository root, not from lungtwin/
 pip install -e .
 
 # The design you probably have
@@ -106,6 +131,9 @@ lungtwin-ident --visits 4 --treatment-start-months 6 --target-se-ri 1.0
 # The design that works
 lungtwin-ident --visits 8 --treatment-start-months 6 --fix-beta \
                --target-se-ri 1.0 --monte-carlo 400
+
+# Check a rank finding is not an artefact of the nominal parameter values
+lungtwin-ident --visits 4 --treatment-start-months 6 --probes 32
 ```
 
 ```python
