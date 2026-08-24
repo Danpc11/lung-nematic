@@ -16,10 +16,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lungtwin-ident",
         description=(
-            "Structural and practical identifiability for the two-state IPF "
-            "twin. Run this before writing an estimator: a fit to a "
-            "structurally unidentifiable model does not fail, it just returns "
-            "an arbitrary point."
+            "Local sensitivity rank analysis and precision bounds for the "
+            "two-state IPF twin. Run this before writing an estimator: a fit "
+            "along a locally flat direction does not fail, it just returns an "
+            "arbitrary point. Note this is a local analysis at one nominal "
+            "parameter point, not a proof of global structural "
+            "identifiability."
         ),
     )
     parser.add_argument("--visits", type=int, default=4,
@@ -66,6 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--target-se-ri", type=float, default=None,
         help="Report the visit count needed for this SE on r_i.",
     )
+    parser.add_argument(
+        "--probes", type=int, default=0,
+        help=(
+            "Recompute the rank at N perturbed parameter points, to check the "
+            "finding is not an artefact of the nominal values."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=0)
     return parser
 
@@ -103,7 +112,8 @@ def main(argv: list[str] | None = None) -> int:
         seed=args.seed,
     )
 
-    report = analyze(params, free, schedule, mode)
+    report = analyze(params, free, schedule, mode, n_probes=args.probes,
+                     probe_seed=args.seed)
     print(render(report))
 
     if args.target_se_ri is not None:
@@ -132,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"SE(r_i) <= {args.target_se_ri}."
             )
 
-    if args.monte_carlo > 0 and report.is_structurally_identifiable:
+    if args.monte_carlo > 0 and report.is_locally_identifiable:
         print()
         result = monte_carlo_check(params, free, schedule, mode,
                                    n_replicates=args.monte_carlo,
