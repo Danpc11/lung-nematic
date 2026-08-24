@@ -115,9 +115,26 @@ def test_only_the_difference_is_identifiable_under_constant_treatment():
 
 def test_treatment_switch_restores_full_rank():
     report = analyze(Parameters(), CORE, routine_followup(4, treatment_start=0.5),
-                     ReserveMode.NONE)
-    assert report.is_structurally_identifiable
+                     ReserveMode.NONE, n_probes=12)
+    assert report.is_locally_identifiable
     assert report.rank == 5
+    # Full rank at the nominal point is a local claim; probing perturbed points
+    # is what upgrades it from "at the value I picked" to "everywhere I looked".
+    assert report.rank_is_stable is True
+
+
+def test_rank_is_reported_as_unprobed_by_default():
+    report = analyze(Parameters(), CORE, routine_followup(4, treatment_start=0.5),
+                     ReserveMode.NONE)
+    assert report.probe_ranks is None
+    assert report.rank_is_stable is None
+
+
+def test_probing_confirms_a_rank_deficiency_is_not_an_artefact():
+    report = analyze(Parameters(), CORE, routine_followup(4), ReserveMode.NONE,
+                     n_probes=12)
+    assert report.rank == 4
+    assert report.rank_is_stable is True
 
 
 def test_missing_dlco_channel_kills_kappa_and_dlco0():
@@ -198,7 +215,7 @@ def test_four_visits_cannot_pin_the_personal_decline_rate():
     """The headline practical result, asserted so a regression would show."""
     report = analyze(Parameters(), CORE, routine_followup(4, treatment_start=0.5),
                      ReserveMode.NONE)
-    assert report.is_structurally_identifiable
+    assert report.is_locally_identifiable
     # SE exceeds the true value: cannot separate a progressor from a stable
     # patient on four visits when beta must also be estimated.
     assert report.standard_errors["r_i"] > Parameters().r_i
@@ -299,9 +316,38 @@ def test_schedule_rejects_a_non_zero_baseline():
 def test_report_names_the_null_direction():
     report = analyze(Parameters(), CORE, routine_followup(4), ReserveMode.NONE)
     text = render(report)
-    assert "NOT identifiable" in text
+    assert "RANK: deficient" in text
     assert "beta" in text
     assert "informative prior" in text
+
+
+def test_report_does_not_claim_global_structural_identifiability():
+    """The claim must stay local however the rank comes out."""
+    full = render(analyze(Parameters(), CORE,
+                          routine_followup(4, treatment_start=0.5),
+                          ReserveMode.NONE))
+    assert "nominal parameter point" in full
+    assert "LOCAL identifiability" in full
+    assert "not proof of global structural identifiability" in full.replace(
+        "\n", " "
+    ).replace("  ", " ")
+
+    deficient = render(analyze(Parameters(), CORE, routine_followup(4),
+                               ReserveMode.NONE))
+    # The old wording promised that no amount of data could ever help. That is
+    # true of this particular model but is not what a local rank establishes.
+    assert "No amount of data" not in deficient
+    assert "does not settle" in deficient.replace("\n", " ")
+
+
+def test_report_flags_unstable_rank_when_probes_disagree():
+    report = analyze(Parameters(), CORE,
+                     routine_followup(4, treatment_start=0.5), ReserveMode.NONE,
+                     n_probes=4)
+    report.probe_ranks = [5, 4, 5, 5]
+    text = render(report)
+    assert "rank is NOT stable" in text
+    assert "non-generic point" in text
 
 
 def test_report_flags_a_useless_precision_bound():
@@ -310,3 +356,62 @@ def test_report_flags_a_useless_precision_bound():
     text = render(report)
     assert "Cramer-Rao" in text
     assert "SE(r_i)" in text
+
+
+# ------------------------------------------------------ design validation
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"n_visits": 0}, "at least 1"),
+        ({"n_visits": -3}, "at least 1"),
+        ({"interval_months": 0.0}, "finite and positive"),
+        ({"interval_months": -6.0}, "finite and positive"),
+        ({"dlco_missing_rate": 1.4}, r"\[0, 1\]"),
+        ({"dlco_missing_rate": -0.1}, r"\[0, 1\]"),
+    ],
+)
+def test_routine_followup_rejects_nonsense(kwargs, match):
+    base = {"n_visits": 4, "interval_months": 6.0}
+    base.update(kwargs)
+    with pytest.raises(ValueError, match=match):
+        routine_followup(**base)
+
+
+def test_treatment_start_after_the_last_visit_is_rejected():
+    """Otherwise the design silently becomes 'never treated' under another name."""
+    with pytest.raises(ValueError, match="after the last visit"):
+        routine_followup(4, interval_months=6.0, treatment_start=5.0)
+
+
+def test_negative_treatment_start_is_rejected():
+    with pytest.raises(ValueError, match="non-negative"):
+        routine_followup(4, treatment_start=-1.0)
+
+
+def test_schedule_requires_at_least_one_channel():
+    with pytest.raises(ValueError, match="at least one observation channel"):
+        VisitSchedule(times=np.array([0.0, 0.5]), channels=())
+
+
+def test_schedule_rejects_a_fully_masked_design():
+    with pytest.raises(ValueError, match="no available observations"):
+        VisitSchedule(
+            times=np.array([0.0, 0.5]),
+            channels=(Channel.FVC,),
+            available={Channel.FVC.value: np.array([False, False])},
+        )
+
+
+def test_schedule_rejects_nonpositive_noise():
+    with pytest.raises(ValueError, match="finite and positive"):
+        VisitSchedule(times=np.array([0.0, 0.5]),
+                      channels=(Channel.FVC,),
+                      noise_sd={Channel.FVC.value: 0.0})
+
+
+def test_full_missingness_still_keeps_baseline_dlco():
+    """Documented behaviour at the boundary, not an accident."""
+    schedule = routine_followup(4, dlco_missing_rate=1.0, seed=0)
+    assert schedule.available[Channel.DLCO.value].tolist() == [
+        True, False, False, False
+    ]
