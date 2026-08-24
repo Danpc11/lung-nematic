@@ -53,6 +53,22 @@ jobs:
           python -c "import simulations.alveolar3d"
           python -c "import simulations.fibrofocus"
           python -c "import simulations.coupled_analysis"
+          # lungtwin was previously a nested project whose modules never
+          # reached the root wheel, while `lungtwin/` at the repo root
+          # resolved as an empty namespace package. Both failures were
+          # invisible to a job that only imported lung_nematic.
+          python -c "import lungtwin"
+          python -c "import lungtwin.model"
+          python -c "import lungtwin.identifiability"
+
+      - name: Run every console script
+        # An entry point can be declared, installed, and still be broken. These
+        # run from a temp dir so the checkout cannot supply the module.
+        run: |
+          cd "$(mktemp -d)"
+          lung-nematic --help > /dev/null
+          lungtwin-ident --help > /dev/null
+          lungtwin-ident --visits 4 --treatment-start-months 6 > /dev/null
 
   lint:
     runs-on: ubuntu-latest
@@ -64,7 +80,7 @@ jobs:
           cache: pip
       - run: pip install ruff==0.16.0
       - name: Ruff
-        run: ruff check lung_nematic simulations tests
+        run: ruff check lung_nematic lungtwin simulations tests
 
   notebooks:
     # A malformed notebook (collapsed source, invalid schema) is invisible until
