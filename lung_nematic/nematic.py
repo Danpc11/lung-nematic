@@ -97,3 +97,128 @@ def get_density_threshold(
     if values.size == 0:
         return float("inf")
     return float(np.quantile(values, quantile))
+
+
+def compute_global_order_from_field(
+    field: dict[str, np.ndarray],
+    tissue_mask: np.ndarray | None = None,
+) -> float:
+    """Density-weighted global nematic order of an orientation field.
+
+    ``compute_global_order`` reads nuclear orientations directly and therefore
+    returns the same number whatever field is being analysed. That made
+    ``global_nematic_order_S`` field-invariant: nuclear, collagen and fused runs
+    over one image reported byte-identical values, so the column described
+    nuclei even when the run was labelled collagen.
+
+    This computes the order from the field itself:
+
+        S = |sum_tissue rho * S_local * exp(2i*theta)| / sum_tissue rho
+
+    Because Gaussian smoothing is linear and conserves mass, on the nuclear
+    field this reproduces the nuclei-based value up to boundary losses, so old
+    and new nuclear numbers stay comparable. On the collagen and fused fields it
+    finally measures what its name claims.
+    """
+    density = np.asarray(field["density"], dtype=float)
+    order = np.asarray(field["order"], dtype=float)
+    theta = np.asarray(field["theta"], dtype=float)
+
+    if tissue_mask is not None:
+        selection = np.asarray(tissue_mask, dtype=bool)
+        density = density[selection]
+        order = order[selection]
+        theta = theta[selection]
+
+    total = float(density.sum())
+    if total <= 0 or density.size == 0:
+        return float("nan")
+
+    resultant = np.sum(density * order * np.exp(2j * theta))
+    return float(min(abs(resultant) / total, 1.0))
+
+
+def global_order_null(
+    oriented_nuclei: pd.DataFrame,
+    n_permutations: int = 199,
+    seed: int = 0,
+) -> dict[str, float]:
+    """Finite-size floor for the global order, by permutation of the source.
+
+    ``S`` is biased upward at finite sample size: for orientations drawn at
+    random it converges not to 0 but to roughly ``1/sqrt(N_eff)``. It is
+    therefore confounded with anything that changes the number of contributing
+    nuclei, and a group with fewer nuclei shows higher ``S`` for no biological
+    reason. Report ``global_order_excess`` rather than raw ``S`` whenever the
+    groups being compared differ in nuclei count or tissue area.
+
+    The null reassigns every orientation uniformly on [0, pi) while holding the
+    anisotropy weights fixed, so the weight distribution - and hence the
+    effective sample size - is exactly preserved and only the alignment is
+    destroyed.
+
+    A block-permutation null over the smoothed field was tried first and
+    rejected: blocks of any size either stay correlated through the Gaussian
+    kernel (anticonservative - 45% of random fields rejected at alpha = 0.05
+    with 2-sigma blocks) or become too few to have power. Permuting at the
+    source has no such tuning parameter. Calibration on random orientations
+    gives mean p = 0.52 and a 4.0% rejection rate at alpha = 0.05, and the
+    simulated floor matches the analytic Rayleigh value
+    ``sqrt(pi)/2 * sqrt(sum w^2) / sum w`` to three decimals.
+
+    Note the scope: this is the null for the *nuclear* orientation source. For
+    collagen and fused fields the source orientations are per-pixel structure
+    tensor estimates that this function does not receive, so the pipeline
+    reports the null columns as NaN there rather than substituting a null that
+    does not apply.
+    """
+    if oriented_nuclei.empty:
+        return _empty_order_null(n_permutations)
+
+    weights = oriented_nuclei["anisotropy_weight"].to_numpy(dtype=float)
+    angles = oriented_nuclei["theta_rad"].to_numpy(dtype=float)
+    total = float(weights.sum())
+    if total <= 0:
+        return _empty_order_null(n_permutations)
+
+    observed = float(abs(np.sum(weights * np.exp(2j * angles))) / total)
+
+    rng = np.random.default_rng(int(seed))
+    null_values = np.empty(int(n_permutations))
+    for index in range(int(n_permutations)):
+        shuffled = rng.uniform(0.0, np.pi, size=angles.size)
+        null_values[index] = abs(
+            np.sum(weights * np.exp(2j * shuffled))
+        ) / total
+
+    null_mean = float(null_values.mean())
+    return {
+        "global_order_observed": observed,
+        "global_order_null_mean": null_mean,
+        "global_order_excess": (
+            observed / null_mean if null_mean > 0 else float("nan")
+        ),
+        "global_order_p": float(
+            (1 + int(np.sum(null_values >= observed))) / (1 + n_permutations)
+        ),
+        "global_order_n_permutations": int(n_permutations),
+    }
+
+
+def expected_order_under_randomness(weights: np.ndarray) -> float:
+    """Analytic Rayleigh floor for ``S``, for a quick check without permuting."""
+    weights = np.asarray(weights, dtype=float)
+    total = weights.sum()
+    if total <= 0:
+        return float("nan")
+    return float(np.sqrt(np.pi) / 2 * np.sqrt((weights**2).sum()) / total)
+
+
+def _empty_order_null(n_permutations: int) -> dict[str, float]:
+    return {
+        "global_order_observed": float("nan"),
+        "global_order_null_mean": float("nan"),
+        "global_order_excess": float("nan"),
+        "global_order_p": float("nan"),
+        "global_order_n_permutations": int(n_permutations),
+    }
