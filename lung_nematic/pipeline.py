@@ -20,6 +20,7 @@ from .io_utils import json_safe as _json_safe
 from .io_utils import read_rgb
 from .io_utils import safe_identifier as _safe_identifier
 from .metrics import summarize_image
+from .nematic import global_order_null
 from .null_model import (
     run_collagen_null_model,
     run_null_model,
@@ -176,6 +177,24 @@ def analyze_image(
             density=field["density"], order=field["order"], theta=field["theta"],
         )
 
+    # Seed first: the global-order null needs it, and it is also recorded below.
+    image_seed = _derived_seed(
+        config.random_seed, metadata["image_id"], field_type
+    )
+
+    # The null permutes nuclear orientations, so it describes the nuclear field
+    # only. Running it on a collagen or fused run would report a floor computed
+    # from a different orientation source than the S it is compared against.
+    order_null = (
+        global_order_null(
+            oriented_nuclei,
+            n_permutations=config.n_permutations,
+            seed=image_seed,
+        )
+        if field_type == "nuclear"
+        else None
+    )
+
     summary = summarize_image(
         metadata=metadata,
         image_shape=tissue_mask.shape,
@@ -187,6 +206,7 @@ def analyze_image(
         density_quantile=config.density_quantile,
         representative_sigma_px=representative_sigma,
         detect_integer_defects=config.detect_integer_defects,
+        global_order_null_stats=order_null,
     )
     summary["field_type"] = field_type
     summary["overlay_path"] = str(overlay_path)
@@ -194,9 +214,6 @@ def analyze_image(
     # One seed per (image, field) rather than one seed for the whole batch:
     # reproducible, but the permutation streams are no longer identical across
     # images, so per-image p-values may be combined across a cohort.
-    image_seed = _derived_seed(
-        config.random_seed, metadata["image_id"], field_type
-    )
     summary["random_seed_used"] = image_seed
 
     if run_null:
