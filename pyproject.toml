@@ -28,10 +28,16 @@ simulation = [
 
 [project.scripts]
 lung-nematic = "lung_nematic.cli:main"
+lungtwin-ident = "lungtwin.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["lung_nematic*", "simulations*"]
+# lungtwin ships from this same distribution. It was previously a nested
+# project (lungtwin/pyproject.toml over lungtwin/lungtwin/), which built a
+# valid wheel of its own but was never included in the root wheel, and which
+# made `lungtwin` resolve from the repo root as an empty namespace package -
+# so `import lungtwin.model` failed and the test suite could not be collected.
+include = ["lung_nematic*", "simulations*", "lungtwin*"]
 
 [tool.setuptools.package-data]
 lung_nematic = ["data/*.json"]
