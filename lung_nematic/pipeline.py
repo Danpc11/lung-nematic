@@ -15,8 +15,10 @@ from .config import AnalysisConfig
 from .defect_maps import render_defect_maps
 from .defects import detect_multiscale_defects
 from .fused_field import detect_multiscale_fused_defects
+from .io_utils import derived_seed as _derived_seed
 from .io_utils import json_safe as _json_safe
 from .io_utils import read_rgb
+from .io_utils import safe_identifier as _safe_identifier
 from .metrics import summarize_image
 from .null_model import (
     run_collagen_null_model,
@@ -27,12 +29,10 @@ from .preprocessing import make_tissue_mask
 from .segmentation import segment_nuclei, select_oriented_nuclei
 from .visualization import save_diagnostic_panel, save_overlay
 
-
-def _safe_identifier(value: object) -> str:
-    text = str(value)
-    for character in ("/", "\\", ":", " "):
-        text = text.replace(character, "_")
-    return text
+# _safe_identifier lives in io_utils so that batch.analyze_folder can enforce
+# uniqueness on exactly the string this module turns into a directory name.
+# Keeping two copies of the normalisation is how "case/01" and "case_01" passed
+# the batch duplicate check and then collided on disk.
 
 
 _REQUIRED_METADATA_KEYS = ("image_id", "group", "filename")
@@ -186,21 +186,30 @@ def analyze_image(
         defects=defects,
         density_quantile=config.density_quantile,
         representative_sigma_px=representative_sigma,
+        detect_integer_defects=config.detect_integer_defects,
     )
     summary["field_type"] = field_type
     summary["overlay_path"] = str(overlay_path)
 
+    # One seed per (image, field) rather than one seed for the whole batch:
+    # reproducible, but the permutation streams are no longer identical across
+    # images, so per-image p-values may be combined across a cohort.
+    image_seed = _derived_seed(
+        config.random_seed, metadata["image_id"], field_type
+    )
+    summary["random_seed_used"] = image_seed
+
     if run_null:
         summary.update(
             _run_null(field_type, oriented_nuclei, eosin, tissue_mask, config,
-                      image_output, tag)
+                      image_output, tag, seed=image_seed)
         )
 
     if run_colocalization:
         coloc = _run_colocalization(
             defects, field, tissue_mask, config,
             representative_sigma_px=representative_sigma,
-            n_bootstrap=config.n_bootstrap, seed=config.random_seed,
+            n_bootstrap=config.n_bootstrap, seed=image_seed,
         )
         _write_table(
             pd.DataFrame({
@@ -245,7 +254,8 @@ def analyze_image(
 
 
 def _run_null(
-    field_type, oriented_nuclei, eosin, tissue_mask, config, image_output, tag
+    field_type, oriented_nuclei, eosin, tissue_mask, config, image_output, tag,
+    *, seed: int,
 ) -> dict:
     if field_type == "fused":
         return {"null_note": "null model is not defined for the fused field"}
@@ -255,7 +265,7 @@ def _run_null(
             oriented_nuclei, tissue_mask, config,
             n_permutations=config.n_permutations,
             downsample=config.null_downsample,
-            mode=config.null_mode, seed=config.random_seed,
+            mode=config.null_mode, seed=seed,
             n_jobs=config.null_n_jobs,
         )
     else:
@@ -264,7 +274,7 @@ def _run_null(
             n_permutations=config.n_permutations,
             downsample=config.null_downsample,
             inner_scale_px=config.collagen_inner_scale_px,
-            seed=config.random_seed,
+            seed=seed,
             n_jobs=config.null_n_jobs,
         )
 
