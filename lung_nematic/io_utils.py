@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import zlib
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -16,17 +18,99 @@ SUPPORTED_EXTENSIONS = {
     ".bmp",
 }
 
+# Characters that cannot appear in a directory name on at least one supported
+# platform. ``/`` and ``\`` would create nesting, ``:`` is a stream separator on
+# NTFS, and the rest are outright illegal there. Spaces are folded too so output
+# paths stay shell-safe.
+_INVALID_NAME_CHARS = set('/\\:*?"<>|') | {" "}
 
-def discover_images(input_dir: str | Path) -> list[Path]:
-    root = Path(input_dir)
+# Names that resolve to something other than a fresh child directory.
+_RESERVED_NAMES = {"", ".", ".."}
+
+
+def safe_identifier(value: object) -> str:
+    """Return ``value`` as a directory-safe name, or raise.
+
+    Every character that is illegal or path-significant on some supported
+    platform is folded to ``_``. The result is then checked against the reserved
+    names: ``".."`` would make ``output_root / safe_id`` resolve to the *parent*
+    of the output root and scatter results outside it, while ``""`` and ``"."``
+    would resolve to the output root itself and drop the per-image files loose
+    among the batch-level ones. Those are refused rather than normalized,
+    because there is no correct directory to silently pick instead.
+
+    Note that this folding is lossy: distinct identifiers such as ``case/01``
+    and ``case_01`` both map to ``case_01``. Callers that build a batch must
+    therefore check uniqueness on the *normalized* name (see
+    ``lung_nematic.batch.analyze_folder``), not on the raw ``image_id``.
+    """
+    raw = str(value)
+    # Surrounding whitespace must go before folding, not after: folding first
+    # would turn "case " into "case_" and "   " into "___", inventing distinct
+    # directory names out of padding instead of collapsing it.
+    text = "".join(
+        "_" if character in _INVALID_NAME_CHARS or ord(character) < 32
+        else character
+        for character in raw.strip()
+    )
+    # NTFS silently strips trailing dots, so "case01." and "case01" would be the
+    # same directory there but not here. Strip them ourselves so the collision is
+    # visible on every platform.
+    text = text.rstrip(".")
+    if text in _RESERVED_NAMES:
+        raise ValueError(
+            f"image_id {raw!r} does not yield a usable directory name "
+            "(it normalizes to a reserved path). Provide a metadata CSV with "
+            "an explicit, non-empty image_id."
+        )
+    return text
+
+
+def derived_seed(base_seed: int, *parts: object) -> int:
+    """Deterministic per-item seed derived from ``base_seed`` and ``parts``.
+
+    A single seed reused verbatim for every image makes the permutation nulls
+    reproducible but *not independent*: each image is shuffled with the same
+    random stream. That dependence is invisible in a per-image p-value and only
+    bites when the p-values are later combined across a cohort. Deriving a seed
+    per (image, field) keeps full reproducibility while decorrelating the
+    streams. CRC32 is used rather than ``hash()`` because the latter is salted
+    per process and would not be reproducible across runs.
+    """
+    key = "|".join(str(part) for part in parts).encode("utf-8")
+    return (int(base_seed) * 1_000_003 + zlib.crc32(key)) % (2**31 - 1)
+
+
+def discover_images(
+    input_dir: str | Path,
+    exclude_dirs: Iterable[str | Path] = (),
+) -> list[Path]:
+    """Recursively collect supported images under ``input_dir``.
+
+    ``exclude_dirs`` removes entire subtrees from the search. This matters
+    because the pipeline writes PNG overlays, diagnostic panels and defect maps,
+    all of which have supported extensions: if the output tree lives inside the
+    input tree, a second run would pick up the first run's renderings and
+    analyse them as histology. They do not fail - the annotations are burned
+    into the raster, so tissue segmentation succeeds - it simply produces
+    plausible numbers from synthetic images.
+    """
+    root = Path(input_dir).resolve()
     if not root.exists():
         raise FileNotFoundError(f"Input directory does not exist: {root}")
 
-    images = [
-        path
-        for path in root.rglob("*")
-        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
-    ]
+    excluded = [Path(directory).resolve() for directory in exclude_dirs]
+
+    images = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+        resolved = path.resolve()
+        if any(resolved.is_relative_to(directory) for directory in excluded):
+            continue
+        images.append(path)
     return sorted(images)
 
 
