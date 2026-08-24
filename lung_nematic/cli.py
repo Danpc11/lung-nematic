@@ -4,6 +4,8 @@ import argparse
 from dataclasses import replace
 from pathlib import Path
 
+import pandas as pd
+
 from .batch import analyze_folder, summarize_by_group
 from .config import load_config, load_default_config
 
@@ -122,13 +124,22 @@ def main() -> None:
     print(f"Failed images: {len(errors)}")
     print(f"Results directory: {output_dir.resolve()}")
 
-    if not summary.empty:
-        summarize_by_group(summary).to_csv(output_dir / "group_summary.csv")
+    # Aggregate over every field present in the output directory, not only the
+    # field this invocation ran, so a second run with --field collagen extends
+    # the group summary instead of replacing the nuclear one.
+    combined_path = output_dir / "summary_metrics.csv"
+    combined = (
+        pd.read_csv(combined_path) if combined_path.exists() else summary
+    )
+    if not combined.empty:
+        summarize_by_group(combined).to_csv(
+            output_dir / "group_summary.csv"
+        )
 
     if not errors.empty:
         print(
             "\nSome images failed. Review:"
-            f"\n{output_dir / 'processing_errors.csv'}"
+            f"\n{output_dir / f'processing_errors_{config.field_type}.csv'}"
         )
 
 
