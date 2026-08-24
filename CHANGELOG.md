@@ -6,7 +6,55 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `lungtwin`: local sensitivity rank analysis and Cramer-Rao precision bounds
+  for a two-state IPF progression model, shipped from this distribution and
+  exposed as the `lungtwin-ident` console script. `analyze(..., n_probes=N)`
+  recomputes the rank at perturbed parameter points, so a finding can be shown
+  not to be an artefact of the nominal values.
+
 ### Fixed
+
+- **`lungtwin` was not importable and its tests could not be collected.** It was
+  laid out as a nested project (`lungtwin/pyproject.toml` over
+  `lungtwin/lungtwin/`). That nested project built a valid wheel of its own, but
+  the root distribution packaged only `lung_nematic*` and `simulations*`, so
+  `lungtwin` never shipped; and from the repository root `lungtwin/` resolved as
+  an empty namespace package, so `import lungtwin.model` raised
+  `ModuleNotFoundError` and `pytest` failed during collection. The package is
+  now flattened to `lungtwin/` at the repository root, the nested
+  `pyproject.toml` is removed, and `lungtwin*` is included in the root
+  distribution. Note that adding `include = ["lungtwin*"]` *without* flattening
+  would not have worked: setuptools would have packaged the inner directory as
+  `lungtwin.lungtwin`.
+- **CI could not have caught the above.** The import job built the real wheel
+  and left the checkout - the right shape - but only imported `lung_nematic` and
+  `simulations`, never `lungtwin`, and never executed a console script. It now
+  imports `lungtwin` and runs `lung-nematic --help` and `lungtwin-ident` from a
+  temporary directory. Ruff now covers `lungtwin` as well.
+- **Design parameters are validated.** `routine_followup` rejects `n_visits < 1`,
+  non-positive or non-finite `interval_months`, and `dlco_missing_rate` outside
+  `[0, 1]`. `VisitSchedule` rejects an empty or duplicated channel list, a
+  negative or non-finite `treatment_start`, non-finite visit times, non-positive
+  measurement noise, and a design where every observation is masked out. A
+  `treatment_start` after the final visit is also rejected: it silently turned
+  the design into "never treated" under another name, which is precisely the
+  design in which `beta` is not estimable.
+
+### Changed
+
+- **`lungtwin` no longer claims structural identifiability.** `analyze` computes
+  the numerical rank of a finite-difference sensitivity matrix at a single
+  nominal parameter point, which establishes *local* identifiability there and
+  nothing more; discrete symmetries, disconnected solution branches, and rank
+  collapse elsewhere in parameter space are invisible to a single-point
+  Jacobian. `IdentifiabilityReport.is_structurally_identifiable` is renamed
+  `is_locally_identifiable`, the report header reads "LOCAL SENSITIVITY RANK
+  ANALYSIS", and the previous assertion that a rank deficiency means "no amount
+  of data, no prior and no optimiser" can recover the combination is removed -
+  that is true of some of this model's deficiencies, but it is not what a local
+  rank computation establishes.
 
 - **Output no longer re-enters as input.** `discover_images` accepts
   `exclude_dirs`, and `analyze_folder` rejects `output_dir == input_dir` and
