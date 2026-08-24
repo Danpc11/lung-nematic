@@ -8,6 +8,27 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `global_order_null` and `expected_order_under_randomness` in `nematic`:
+  a permutation floor for the global order parameter. `S` is biased upward as
+  ~`1/sqrt(N_eff)`, so it is confounded with nuclei count and tissue area and a
+  group with fewer nuclei scores higher for no biological reason. New summary
+  columns `global_order_null_mean`, `global_order_excess` and `global_order_p`;
+  **report the excess, not raw `S`, whenever the compared groups differ in
+  nuclei count or tissue area.**
+  A block-permutation null over the smoothed field was implemented first and
+  discarded: blocks stay correlated through the Gaussian kernel and rejected
+  45% of purely random fields at alpha = 0.05 with 2-sigma blocks, and no block
+  size both calibrated and retained power. Permuting the source orientations has
+  no such parameter; calibration gives mean p = 0.52 and a 4.0% rejection rate
+  at alpha = 0.05, and the simulated floor matches the analytic Rayleigh value.
+  Scope: the null permutes *nuclear* orientations, so the pipeline computes it
+  for `field_type == "nuclear"` only and leaves the columns NaN for collagen and
+  fused runs rather than substituting a floor from a different source.
+- `low_orientation_count`: flags images below `min_oriented_nuclei` (default
+  200), where `S` is dominated by finite-size noise. Flagged, not dropped.
+- `global_nematic_order_S_nuclei`: the previous nuclei-based value, retained so
+  earlier results remain traceable.
+
 - `lungtwin`: local sensitivity rank analysis and Cramer-Rao precision bounds
   for a two-state IPF progression model, shipped from this distribution and
   exposed as the `lungtwin-ident` console script. `analyze(..., n_probes=N)`
@@ -15,6 +36,19 @@ All notable changes to this project are documented here. The format follows
   not to be an artefact of the nominal values.
 
 ### Fixed
+
+- **`global_nematic_order_S` ignored `field_type`.** It was computed by
+  `compute_global_order(oriented_nuclei)`, which never receives the field, so
+  nuclear, collagen and fused runs over one image returned byte-identical
+  values - the column described nuclei even when the run was labelled collagen.
+  Confirmed on a real 117-image cohort, where the three field types agreed to
+  the last digit while `local_S_median` correlated at only 0.17 between nuclear
+  and collagen, as it should. It is now computed from the field itself via
+  `compute_global_order_from_field`, as the density-weighted resultant over the
+  tissue mask. Because Gaussian smoothing is linear and conserves mass, nuclear
+  values reproduce the old ones to within boundary losses, so existing nuclear
+  results stay comparable; collagen and fused values change and any conclusion
+  drawn from them should be recomputed.
 
 - **`lungtwin` was not importable and its tests could not be collected.** It was
   laid out as a nested project (`lungtwin/pyproject.toml` over
