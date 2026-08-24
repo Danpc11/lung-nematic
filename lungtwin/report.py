@@ -33,8 +33,10 @@ _INTERPRETATION = {
     ),
     frozenset({"alpha"}): (
         "alpha has identically zero sensitivity: the reserve state does not "
-        "reach any observation channel. Use ReserveMode.OBSERVED to give it "
-        "one, or ReserveMode.FEEDBACK to let it act on the burden rate."
+        "reach any observation channel. This one is exact and global, not "
+        "merely local - alpha is absent from every observation equation. Use "
+        "ReserveMode.OBSERVED to give it a channel, or ReserveMode.FEEDBACK to "
+        "let it act on the burden rate."
     ),
 }
 
@@ -43,7 +45,7 @@ def render(report: IdentifiabilityReport, *, width: int = 78) -> str:
     lines: list[str] = []
     rule = "-" * width
 
-    lines.append("IDENTIFIABILITY REPORT")
+    lines.append("LOCAL SENSITIVITY RANK ANALYSIS")
     lines.append(rule)
     lines.append(f"design       : {report.design}")
     lines.append(f"observations : {report.n_observations}")
@@ -59,24 +61,29 @@ def render(report: IdentifiabilityReport, *, width: int = 78) -> str:
     lines.append(f"numerical rank  : {report.rank} / {len(report.free_names)}")
     lines.append("")
 
-    if report.is_structurally_identifiable:
-        lines.append("STRUCTURAL: identifiable.")
+    if report.is_locally_identifiable:
+        lines.append("RANK: full, at the nominal parameter point.")
+        lines.append(
+            "  This establishes LOCAL identifiability there. It is not proof "
+            "of global structural identifiability: discrete symmetries, "
+            "disconnected solution branches and rank collapse elsewhere in "
+            "parameter space are invisible to a single-point Jacobian."
+        )
         lines.append(f"  condition number {report.condition_number:.1f}")
         if report.condition_number > 1e4:
             lines.append(
-                "  WARNING: severe ill-conditioning. The model is identifiable "
-                "in exact arithmetic only; treat it as unidentifiable in "
-                "practice."
+                "  WARNING: severe ill-conditioning. Full rank holds in exact "
+                "arithmetic only; treat it as unidentifiable in practice."
             )
     else:
         deficiency = len(report.free_names) - report.rank
+        lines.append(f"RANK: deficient by {deficiency} at the nominal point.")
         lines.append(
-            f"STRUCTURAL: NOT identifiable - {deficiency} null direction(s)."
-        )
-        lines.append(
-            "  No amount of data, no prior and no optimiser recovers these "
-            "combinations. Fitting anyway returns whatever point the "
-            "initialisation drifted to."
+            "  Each direction below is locally flat here: moving along it "
+            "leaves every observation of THIS design unchanged, so fitting "
+            "returns whatever point the initialisation drifted to. Whether the "
+            "direction is flat everywhere is a separate question this rank "
+            "computation does not settle."
         )
         for index, direction in enumerate(report.null_directions, start=1):
             terms = "  ".join(
@@ -88,9 +95,26 @@ def render(report: IdentifiabilityReport, *, width: int = 78) -> str:
                 for wrapped in _wrap(note, width - 6):
                     lines.append(f"      {wrapped}")
 
+    if report.probe_ranks:
+        distinct = sorted(set(report.probe_ranks))
+        lines.append("")
+        if report.rank_is_stable:
+            lines.append(
+                f"  probed at {len(report.probe_ranks)} perturbed parameter "
+                f"points: rank {report.rank} throughout. Stronger evidence "
+                "than a single point, still not a proof."
+            )
+        else:
+            lines.append(
+                f"  WARNING: rank is NOT stable across "
+                f"{len(report.probe_ranks)} perturbed points (observed ranks "
+                f"{distinct}). The nominal value sits on a non-generic point; "
+                "the single-point finding above should not be relied on."
+            )
+
     lines.append("")
     if report.standard_errors is not None:
-        lines.append("PRACTICAL: Cramer-Rao lower bounds (pinned noise)")
+        lines.append("PRECISION: Cramer-Rao lower bounds (pinned noise)")
         for name, error in report.standard_errors.items():
             lines.append(f"  SE({name}) >= {error:.3f}")
         lines.append("")
@@ -115,9 +139,9 @@ def render(report: IdentifiabilityReport, *, width: int = 78) -> str:
                     )
     else:
         lines.append(
-            "PRACTICAL: not computed - the information matrix is singular. "
-            "Fix the structural problem first; a precision bound on an "
-            "unidentifiable model is meaningless."
+            "PRECISION: not computed - the information matrix is singular at "
+            "the nominal point. Resolve the rank deficiency first; a precision "
+            "bound where the information matrix is singular is meaningless."
         )
 
     lines.append(rule)
