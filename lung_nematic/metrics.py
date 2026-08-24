@@ -3,7 +3,22 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .nematic import compute_global_order, get_density_threshold
+from .nematic import (
+    compute_global_order,
+    compute_global_order_from_field,
+    get_density_threshold,
+)
+
+
+def _null_field(stats: dict | None, key: str) -> float:
+    """Null-model column, NaN when the null was not run.
+
+    NaN rather than 0 so "the null was not computed" stays distinguishable from
+    "the null was computed and came out at zero".
+    """
+    if stats is None:
+        return float("nan")
+    return stats.get(key, float("nan"))
 
 
 def summarize_image(
@@ -17,6 +32,8 @@ def summarize_image(
     density_quantile: float,
     representative_sigma_px: float,
     detect_integer_defects: bool = False,
+    global_order_null_stats: dict | None = None,
+    min_oriented_nuclei: int = 200,
 ) -> dict:
     height, width = image_shape
     density_cutoff = get_density_threshold(
@@ -84,8 +101,29 @@ def summarize_image(
         "tissue_area_mm2": tissue_area_mm2,
         "n_nuclei": len(nuclei),
         "n_oriented_nuclei": len(oriented_nuclei),
-        "global_nematic_order_S": compute_global_order(
-            oriented_nuclei
+        # Computed from `field`, not from the nuclei table: the nuclei-based
+        # value is identical across field types and so cannot describe a
+        # collagen or fused run.
+        "global_nematic_order_S": compute_global_order_from_field(
+            field, tissue_mask
+        ),
+        "global_nematic_order_S_nuclei": compute_global_order(oriented_nuclei),
+        # S is biased upward as ~1/sqrt(N_eff), so it is confounded with nuclei
+        # count and tissue area. Prefer the excess over the null when comparing
+        # groups that differ in either.
+        "global_order_null_mean": _null_field(
+            global_order_null_stats, "global_order_null_mean"
+        ),
+        "global_order_excess": _null_field(
+            global_order_null_stats, "global_order_excess"
+        ),
+        "global_order_p": _null_field(
+            global_order_null_stats, "global_order_p"
+        ),
+        # Below this count the order parameter is dominated by finite-size
+        # noise; flagged rather than dropped so the caller decides.
+        "low_orientation_count": bool(
+            len(oriented_nuclei) < int(min_oriented_nuclei)
         ),
         "local_S_q25": quantile_or_nan(0.25),
         "local_S_median": quantile_or_nan(0.50),
