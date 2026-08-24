@@ -72,8 +72,34 @@ class VisitSchedule:
         self.times = np.asarray(self.times, dtype=float)
         if self.times.size == 0 or self.times[0] != 0.0:
             raise ValueError("times must be non-empty and start at 0.")
+        if not np.all(np.isfinite(self.times)):
+            raise ValueError("times must all be finite.")
         if np.any(np.diff(self.times) <= 0):
             raise ValueError("times must be strictly increasing.")
+        if not self.channels:
+            raise ValueError("at least one observation channel is required.")
+        if len(set(self.channels)) != len(self.channels):
+            raise ValueError("channels contains duplicates.")
+
+        if self.treatment_start is not None:
+            start = float(self.treatment_start)
+            if not np.isfinite(start) or start < 0.0:
+                raise ValueError(
+                    "treatment_start must be a finite, non-negative number of "
+                    "years, or None for never treated."
+                )
+            if start > self.times[-1]:
+                # Silently accepting this would report a design as though it
+                # had a treatment change, when in fact therapy starts after the
+                # last visit and the patient is untreated throughout - which is
+                # precisely the design in which beta is not estimable.
+                raise ValueError(
+                    f"treatment_start ({start:.3f} y) is after the last visit "
+                    f"({self.times[-1]:.3f} y); the patient is untreated for "
+                    "the whole of this design. Pass treatment_start=None to "
+                    "say that explicitly."
+                )
+            self.treatment_start = start
         for channel in self.channels:
             mask = self.available.get(channel.value)
             if mask is None:
@@ -88,8 +114,17 @@ class VisitSchedule:
                 self.available[channel.value] = mask
             if channel.value not in self.noise_sd:
                 raise ValueError(f"no noise_sd given for channel {channel.value}")
-            if self.noise_sd[channel.value] <= 0:
-                raise ValueError(f"noise_sd for {channel.value} must be positive")
+            sd = self.noise_sd[channel.value]
+            if not np.isfinite(sd) or sd <= 0:
+                raise ValueError(
+                    f"noise_sd for {channel.value} must be finite and positive"
+                )
+
+        if self.n_observations == 0:
+            raise ValueError(
+                "this design has no available observations at all; every "
+                "channel is masked out."
+            )
 
     @property
     def n_observations(self) -> int:
@@ -143,6 +178,21 @@ def routine_followup(
     the loss of precision from having fewer measurements, not to estimate the
     bias from why they are absent.
     """
+    if n_visits < 1:
+        raise ValueError(f"n_visits must be at least 1, got {n_visits}")
+    if not np.isfinite(interval_months) or interval_months <= 0.0:
+        raise ValueError(
+            f"interval_months must be finite and positive, got {interval_months}"
+        )
+    if not 0.0 <= dlco_missing_rate <= 1.0:
+        # Out of range values do not fail loudly: a rate above 1 masks every
+        # follow-up DLCO and leaves only the baseline, which still analyses
+        # cleanly and silently answers a different design question.
+        raise ValueError(
+            "dlco_missing_rate must lie in [0, 1], got "
+            f"{dlco_missing_rate}"
+        )
+
     times = np.arange(n_visits, dtype=float) * (interval_months / 12.0)
     available: dict[str, np.ndarray] = {}
     if dlco_missing_rate > 0.0 and Channel.DLCO in channels:
