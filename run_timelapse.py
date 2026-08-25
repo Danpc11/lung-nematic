@@ -40,11 +40,13 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
 from lung_nematic.config import load_default_config
 from lung_nematic.io_utils import read_rgb
+from lung_nematic.lic import lic_rgb
 from lung_nematic.phase_contrast import analyze_phase_contrast
 from lung_nematic.tracking import (
     calibrate,
@@ -74,9 +76,9 @@ def frame_paths(folder: Path) -> list[Path]:
                   if p.is_file() and p.suffix.lower() in SUPPORTED)
 
 
-def analyse_one(args) -> tuple[int, dict, pd.DataFrame]:
+def analyse_one(args) -> tuple[int, dict, pd.DataFrame, np.ndarray | None]:
     """Worker: analyse a single frame. Returns its index so order can be restored."""
-    index, path, config = args
+    index, path, config, render = args
     image = read_rgb(Path(path))
     result = analyze_phase_contrast(image, config)
 
@@ -90,7 +92,14 @@ def analyse_one(args) -> tuple[int, dict, pd.DataFrame]:
         if len(found) else
         pd.DataFrame(columns=["x_px", "y_px", "charge"], dtype=float)
     )
-    return index, summary, defects
+    texture = None
+    if render:
+        field = result["field"]
+        # Rendered in the worker: the field arrays are large and pickling them
+        # back to the parent would cost more than the render itself.
+        texture = lic_rgb(field["theta"], field["order"],
+                          result["coverage_mask"], seed=index)
+    return index, summary, defects, texture
 
 
 def resolve_workers(n_jobs: int, n_tasks: int) -> int:
@@ -100,30 +109,32 @@ def resolve_workers(n_jobs: int, n_tasks: int) -> int:
     return max(1, min(int(requested), int(n_tasks)))
 
 
-def analyse_series(paths, config, n_jobs: int, label: str):
+def analyse_series(paths, config, n_jobs: int, label: str, render: bool = False):
     """Analyse every frame of one series, in parallel, in frame order."""
-    tasks = [(index, str(path), config) for index, path in enumerate(paths)]
+    tasks = [(index, str(path), config, render)
+             for index, path in enumerate(paths)]
     workers = resolve_workers(n_jobs, len(tasks))
 
-    collected: dict[int, tuple[dict, pd.DataFrame]] = {}
+    collected: dict[int, tuple] = {}
     if workers == 1:
         for task in tqdm(tasks, desc=label):
-            index, summary, defects = analyse_one(task)
-            collected[index] = (summary, defects)
+            index, summary, defects, texture = analyse_one(task)
+            collected[index] = (summary, defects, texture)
     else:
         with ProcessPoolExecutor(max_workers=workers) as pool:
             futures = [pool.submit(analyse_one, task) for task in tasks]
             for future in tqdm(as_completed(futures), total=len(futures),
                                desc=f"{label} [{workers}p]"):
-                index, summary, defects = future.result()
-                collected[index] = (summary, defects)
+                index, summary, defects, texture = future.result()
+                collected[index] = (summary, defects, texture)
 
     # Restore frame order. Pool completion order is arbitrary and a series
     # assembled in it would be shuffled without raising anything.
     ordered = [collected[index] for index in sorted(collected)]
     return (
-        pd.DataFrame([summary for summary, _ in ordered]),
-        [defects for _, defects in ordered],
+        pd.DataFrame([summary for summary, _, _ in ordered]),
+        [defects for _, defects, _ in ordered],
+        [texture for _, _, texture in ordered],
     )
 
 
@@ -182,7 +193,78 @@ def build_parser() -> argparse.ArgumentParser:
                             "contrast between them - measured at 41% loss. "
                             "Leave correction on unless the frames are already "
                             "registered.")
+    render = parser.add_argument_group("rendering")
+    render.add_argument("--render-mp4", action="store_true",
+                        help="Write an MP4 per stiffness: line integral "
+                             "convolution of the director field, with tracked "
+                             "defects and their velocity vectors overlaid.")
+    render.add_argument("--fps", type=int, default=6)
+    render.add_argument("--trail-frames", type=int, default=8,
+                        help="Length of the trail drawn behind each defect.")
+    render.add_argument("--velocity-gain", type=float, default=6.0,
+                        help="Arrow length per px/frame of speed. Purely "
+                             "visual; the numbers are in the TSVs.")
     return parser
+
+
+def render_series(textures, tracks, output_path, fps, trail_frames,
+                  velocity_gain):
+    """Write the MP4: LIC background, defect markers, trails, velocity arrows.
+
+    Colour encodes charge, not speed: +1/2 and -1/2 are physically different
+    objects and only the first self-propels, so the eye should separate them
+    first. Speed is shown by arrow length.
+    """
+    import imageio.v2 as imageio
+    from PIL import Image, ImageDraw
+
+    plus_colour, minus_colour = (255, 96, 64), (64, 176, 255)
+    writer = imageio.get_writer(str(output_path), fps=fps, macro_block_size=1)
+    try:
+        for index, texture in enumerate(textures):
+            if texture is None:
+                continue
+            canvas = Image.fromarray(texture)
+            draw = ImageDraw.Draw(canvas)
+
+            present = tracks[tracks.frame == index]
+            for _, defect in present.iterrows():
+                colour = plus_colour if defect.charge > 0 else minus_colour
+                x, y = float(defect.x_px), float(defect.y_px)
+
+                history = tracks[
+                    (tracks.track_id == defect.track_id)
+                    & (tracks.frame <= index)
+                    & (tracks.frame > index - trail_frames)
+                ].sort_values("frame")
+                if len(history) > 1:
+                    draw.line(
+                        [(float(r.x_px), float(r.y_px))
+                         for r in history.itertuples()],
+                        fill=colour, width=2,
+                    )
+
+                if len(history) > 1:
+                    previous = history.iloc[-2]
+                    dx = x - float(previous.x_px)
+                    dy = y - float(previous.y_px)
+                    draw.line([(x, y), (x + dx * velocity_gain,
+                                        y + dy * velocity_gain)],
+                              fill=colour, width=3)
+
+                radius = 7
+                if defect.charge > 0:
+                    draw.ellipse([x - radius, y - radius, x + radius, y + radius],
+                                 outline=colour, width=3)
+                else:
+                    draw.polygon([(x, y - radius), (x - radius, y + radius),
+                                  (x + radius, y + radius)],
+                                 outline=colour)
+
+            draw.text((10, 10), f"frame {index}", fill=(255, 255, 255))
+            writer.append_data(np.asarray(canvas))
+    finally:
+        writer.close()
 
 
 def main(argv=None) -> int:
@@ -235,8 +317,9 @@ def main(argv=None) -> int:
     )
 
     for stiffness, paths in series.items():
-        metrics, defect_frames = analyse_series(
-            paths, config, args.n_jobs, f"{stiffness:g} kPa"
+        metrics, defect_frames, textures = analyse_series(
+            paths, config, args.n_jobs, f"{stiffness:g} kPa",
+            render=args.render_mp4,
         )
         metrics["stiffness_kPa"] = stiffness
 
@@ -308,6 +391,12 @@ def main(argv=None) -> int:
         if median_length <= 2:
             print("    ! median track length <= 2 frames: raise "
                   "--max-displacement-px, tracks are being broken")
+
+        if args.render_mp4:
+            video = args.output / f"director_{stiffness:g}kPa.mp4"
+            render_series(textures, tracks, video, args.fps,
+                          args.trail_frames, args.velocity_gain)
+            print(f"    wrote {video}")
 
         all_metrics.append(metrics)
         all_tracks.append(tracks.assign(stiffness_kPa=stiffness))
