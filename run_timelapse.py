@@ -3,10 +3,9 @@
 
     python run_timelapse.py --frames frames --output resultados --n-jobs -1
 
-``--frames`` is a directory holding one subdirectory per stiffness, named so the
-number can be read from it (``5kPa``, ``10kPa``, ``23kPa``). Frames are read in
-sorted filename order, so zero-padded names are required: ``t1, t2, ... t10``
-sorts ``t10`` before ``t2`` and silently scrambles time.
+``--frames`` accepts either per-stiffness image subdirectories or a directory
+with one MP4 per stiffness. Images are preferable because lossy video
+compression can imprint axis-aligned structure on the director field.
 
 Parallelism
 -----------
@@ -54,10 +53,12 @@ from lung_nematic.tracking import (
     detector_stability,
     estimate_drift,
     motility_by_charge,
+    pair_events,
     subtract_drift,
     track_defects,
     track_summary,
 )
+from lung_nematic.video import axis_bias, read_video_frames, video_metadata
 
 SUPPORTED = {".png", ".tif", ".tiff", ".jpg", ".jpeg", ".bmp"}
 
@@ -79,13 +80,16 @@ def frame_paths(folder: Path) -> list[Path]:
 
 def analyse_one(args) -> tuple[int, dict, pd.DataFrame, np.ndarray | None]:
     """Worker: analyse a single frame. Returns its index so order can be restored."""
-    index, path, config, render = args
-    image = read_rgb(Path(path))
+    index, source, config, render = args
+    image = read_rgb(Path(source)) if isinstance(source, str) else source
     result = analyze_phase_contrast(image, config)
 
     summary = {k: v for k, v in result.items() if k not in ARRAY_KEYS}
-    summary.update(frame=index, filename=Path(path).name,
+    filename = Path(source).name if isinstance(source, str) else f"frame_{index:06d}"
+    summary.update(frame=index, filename=filename,
                    height_px=image.shape[0], width_px=image.shape[1])
+    bias = axis_bias(result["field"]["theta"], result["coverage_mask"])
+    summary.update({f"orientation_{key}": value for key, value in bias.items()})
 
     found = result["defects"]
     defects = (
@@ -144,8 +148,12 @@ def build_parser() -> argparse.ArgumentParser:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--frames", required=True, type=Path,
-                        help="Directory of per-stiffness subdirectories.")
+    parser.add_argument(
+        "--frames", required=True, type=Path,
+        help=("Directory of per-stiffness image subdirectories or one MP4 per "
+              "stiffness. Prefer original TIFFs: lossy video compression can "
+              "bias structure-tensor orientations toward image axes."),
+    )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--n-jobs", type=int, default=-1,
                         help="Worker processes; -1 uses all cores (default).")
@@ -191,10 +199,9 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--cluster-radius-px", type=float, default=45.0)
 
     track = parser.add_argument_group("tracking")
-    track.add_argument("--max-displacement-px", type=float, default=25.0,
-                       help="Linking gate. Check track_summary afterwards: a "
-                            "median track length of 1-2 frames means this is "
-                            "too tight and real trajectories are being broken.")
+    track.add_argument("--max-displacement-px", type=float, default=30.0,
+                       help="Linking gate in pixels (default 30). Short tracks "
+                            "alone do not imply this gate is too tight.")
     track.add_argument(
         "--max-gap", type=int, default=1,
         help="Missing intermediate frames a track may survive. Defaults to 1 "
@@ -331,7 +338,29 @@ def main(argv=None) -> int:
         if len(paths) < 3:
             print(f"  skipping {folder.name}: {len(paths)} frames, need 3")
             continue
-        series[stiffness] = paths
+        series[stiffness] = (paths, None)
+
+    for video_path in sorted(args.frames.glob("*.mp4")):
+        stiffness = stiffness_from_name(video_path.name)
+        if stiffness is None:
+            print(f"  skipping {video_path.name}: no stiffness in the name")
+            continue
+        if stiffness in series:
+            print(f"  using original images for {stiffness:g} kPa; ignoring "
+                  f"lossy {video_path.name}")
+            continue
+        metadata = video_metadata(video_path)
+        print(f"  {video_path.name}: codec {metadata['codec']}, container "
+              f"fps {metadata['container_fps']} (playback only; ignored)")
+        print("    ! MP4 compression is lossy and can bias orientations toward "
+              "0 and pi/2; original TIFFs should be used when available")
+        # Decode once in the parent. Reopening one compressed stream in every
+        # worker is wasteful and some ffmpeg backends are not process-safe.
+        frames = list(read_video_frames(video_path, max_frames=args.max_frames))
+        if len(frames) < 3:
+            print(f"  skipping {video_path.name}: {len(frames)} frames, need 3")
+            continue
+        series[stiffness] = (frames, metadata)
 
     if not series:
         print("no usable series found", file=sys.stderr)
@@ -349,12 +378,17 @@ def main(argv=None) -> int:
     )
     all_stability = []
 
-    for stiffness, paths in series.items():
+    for stiffness, (paths, video_info) in series.items():
         metrics, defect_frames, textures = analyse_series(
             paths, config, args.n_jobs, f"{stiffness:g} kPa",
             render=args.render_mp4,
         )
         metrics["stiffness_kPa"] = stiffness
+        if video_info is not None and metrics["orientation_flagged"].any():
+            fraction = metrics["orientation_axis_fraction"].mean()
+            expected = metrics["orientation_uniform_expected"].mean()
+            print(f"    ! possible codec axis bias: {fraction:.1%} of directors "
+                  f"near 0/pi/2 versus {expected:.1%} under uniform angles")
 
         # Diagnose the detector BEFORE the tracker. Both failures - defects
         # moving too far to link, and detections flickering in and out -
@@ -369,17 +403,39 @@ def main(argv=None) -> int:
               f"(null {stability['null_median_nn_px']:.0f}), "
               f"orphans {stability['orphan_fraction']:.0%}, "
               f"count swing {stability['count_fluctuation']:.0%}")
-        if stability["orphan_fraction"] > 0.15:
-            print("    ! orphans above 15%: the detector is flickering, not "
-                  "the defects moving. Raise --n-scales or lower "
-                  "--min-scales. A higher --density-quantile makes this "
-                  "worse - it removed detections and broke charge balance.")
-
         raw = track_defects(
             defect_frames,
             max_displacement_px=args.max_displacement_px,
             max_gap=args.max_gap,
         )
+        raw.attrs["width_px"] = float(metrics.width_px.max())
+        raw.attrs["height_px"] = float(metrics.height_px.max())
+        pairing = pair_events(raw, radius_px=100.0)
+        birth_fraction = pairing["paired_birth_fraction"]
+        birth_null = pairing["null_paired_birth_fraction"]
+        death_fraction = pairing["paired_death_fraction"]
+        death_null = pairing["null_paired_death_fraction"]
+        def enrichment(observed, null):
+            if not np.isfinite(observed) or not np.isfinite(null):
+                return np.nan
+            if null > 0:
+                return observed / null
+            return np.inf if observed > 0 else 1.0
+
+        pair_enrichment = np.nanmax([
+            enrichment(birth_fraction, birth_null),
+            enrichment(death_fraction, death_null),
+        ])
+        print(f"    paired turnover: births {birth_fraction:.0%} "
+              f"(null {birth_null:.0%}), deaths {death_fraction:.0%} "
+              f"(null {death_null:.0%})")
+        if stability["orphan_fraction"] > 0.15 and not pair_enrichment > 5:
+            print("    ! many orphans without enriched opposite-charge pairs: "
+                  "possible detector flicker; check --n-scales and "
+                  "--min-scales before changing the linking gate")
+        elif stability["orphan_fraction"] > 0.15:
+            print("    high orphan fraction is accompanied by >5x-null paired "
+                  "turnover, so it is consistent with physical birth/death")
 
         n_plus = int((raw.charge > 0).sum()) if len(raw) else 0
         n_minus = int((raw.charge < 0).sum()) if len(raw) else 0
@@ -428,7 +484,10 @@ def main(argv=None) -> int:
             metrics.coverage_fraction * metrics.width_px * metrics.height_px
             * (args.microns_per_pixel / 1000.0) ** 2,
         ))
-        kinetics = defect_kinetics(tracks, areas)
+        kinetics = defect_kinetics(
+            tracks, areas, seconds_per_frame=args.seconds_per_frame,
+            pair_radius_px=100.0,
+        )
         kinetics["stiffness_kPa"] = stiffness
 
         summary = track_summary(tracks)
@@ -444,8 +503,20 @@ def main(argv=None) -> int:
               f"median track {median_length:.0f} frames, "
               f"mean S {metrics.global_nematic_order_S.mean():.3f}")
         if median_length <= 2:
-            print("    ! median track length <= 2 frames: raise "
-                  "--max-displacement-px, tracks are being broken")
+            if pair_enrichment > 5:
+                lifetime_minutes = (
+                    summary.n_frames.mean() * args.seconds_per_frame / 60
+                    if args.seconds_per_frame else np.nan
+                )
+                units = (f"mean lifetime {lifetime_minutes:.0f} min; "
+                         if args.seconds_per_frame else "")
+                print(f"    short tracks: {units}paired turnover is >5x null, "
+                      "consistent with physical birth/death; no gate change "
+                      "is indicated")
+            else:
+                print("    ! short tracks without enriched pair turnover: "
+                      "check --n-scales, --min-scales and then "
+                      "--max-displacement-px")
 
         if args.render_mp4:
             video = args.output / f"director_{stiffness:g}kPa.mp4"
@@ -484,18 +555,17 @@ def main(argv=None) -> int:
         table.to_csv(args.output / name, sep="\t", index=False)
         print(f"  wrote {args.output / name}  ({len(table)} rows)")
 
-    speed_column = (
-        "mean_speed_um_per_s" if "mean_speed_um_per_s" in motility.columns
-        else "mean_speed_px_per_frame"
-    )
-    wide = motility.pivot_table(index="stiffness_kPa", columns="charge",
-                                values=speed_column)
-    if 0.5 in wide.columns and -0.5 in wide.columns:
-        wide["contrast"] = wide[0.5] - wide[-0.5]
-        print(f"\nactivity signature ({speed_column}):")
-        print(wide.round(4).to_string())
-        print("\n  speed(+1/2) > speed(-1/2) means the nematic is active;")
-        print("  the contrast scales with activity.")
+    if "pair_nucleation_rate_mm2_h" in kinetics.columns:
+        nucleation = kinetics[kinetics.frame > 0].groupby("stiffness_kPa")[
+            "pair_nucleation_rate_mm2_h"
+        ].mean()
+        print("\npair nucleation activity (pairs/mm2/h):")
+        print(nucleation.round(3).to_string())
+        print("\n  Pair turnover is the primary activity observable because "
+              "defect lifetimes are too short for robust velocity contrasts.")
+    else:
+        print("\n! --seconds-per-frame is required for pair nucleation rates; "
+              "counts remain available in defect_kinetics.tsv")
     return 0
 
 
