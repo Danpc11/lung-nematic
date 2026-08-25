@@ -146,11 +146,21 @@ def global_order_null(
     """Finite-size floor for the global order, by permutation of the source.
 
     ``S`` is biased upward at finite sample size: for orientations drawn at
-    random it converges not to 0 but to roughly ``1/sqrt(N_eff)``. It is
-    therefore confounded with anything that changes the number of contributing
-    nuclei, and a group with fewer nuclei shows higher ``S`` for no biological
-    reason. Report ``global_order_excess`` rather than raw ``S`` whenever the
-    groups being compared differ in nuclei count or tissue area.
+    random it converges not to 0 but to roughly ``1/sqrt(N_eff)``.  Dividing by
+    that floor is *not* a correction: ``S / floor`` grows as ``sqrt(N_eff)`` at
+    fixed biological alignment.  Instead we debias the squared resultant.  If
+    ``q = sum(w^2) / sum(w)^2``, then
+
+        E[S^2] = q + (1 - q) * S_population^2
+
+    and the method-of-moments estimate is
+
+        S_debiased = sqrt(max(0, (S^2 - q) / (1 - q))).
+
+    ``global_order_excess`` is retained as a compatibility alias for this
+    corrected effect size; it no longer means the old, sample-size-dependent
+    ratio. ``global_order_p`` remains a significance measure and will, as it
+    should, gain power with sample size.
 
     The null reassigns every orientation uniformly on [0, pi) while holding the
     anisotropy weights fixed, so the weight distribution - and hence the
@@ -182,6 +192,14 @@ def global_order_null(
         return _empty_order_null(n_permutations)
 
     observed = float(abs(np.sum(weights * np.exp(2j * angles))) / total)
+    finite_sample_q = float(np.sum(weights**2) / total**2)
+    if finite_sample_q < 1.0:
+        debiased_sq = (observed**2 - finite_sample_q) / (1.0 - finite_sample_q)
+        debiased = float(np.sqrt(np.clip(debiased_sq, 0.0, 1.0)))
+    else:
+        # One effective observation contains no information about population
+        # alignment after correcting its unavoidable unit resultant.
+        debiased = float("nan")
 
     rng = np.random.default_rng(int(seed))
     null_values = np.empty(int(n_permutations))
@@ -195,9 +213,8 @@ def global_order_null(
     return {
         "global_order_observed": observed,
         "global_order_null_mean": null_mean,
-        "global_order_excess": (
-            observed / null_mean if null_mean > 0 else float("nan")
-        ),
+        "global_order_debiased": debiased,
+        "global_order_excess": debiased,
         "global_order_p": float(
             (1 + int(np.sum(null_values >= observed))) / (1 + n_permutations)
         ),
@@ -218,6 +235,7 @@ def _empty_order_null(n_permutations: int) -> dict[str, float]:
     return {
         "global_order_observed": float("nan"),
         "global_order_null_mean": float("nan"),
+        "global_order_debiased": float("nan"),
         "global_order_excess": float("nan"),
         "global_order_p": float("nan"),
         "global_order_n_permutations": int(n_permutations),
