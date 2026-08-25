@@ -17,12 +17,12 @@ dependencies = [
     "matplotlib>=3.7",
     "pillow>=10.0",
     "tqdm>=4.66",
+    "imageio>=2.31",
+    "imageio-ffmpeg>=0.4.9",
 ]
 
 [project.optional-dependencies]
 simulation = [
-    "imageio>=2.31",
-    "imageio-ffmpeg>=0.4.9",
     "seaborn>=0.13",
 ]
 
