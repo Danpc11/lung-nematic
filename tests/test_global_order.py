@@ -143,7 +143,8 @@ def test_null_is_calibrated_under_random_orientations():
 
 def test_null_detects_real_alignment():
     result = global_order_null(_nuclei(spread=0.5, seed=7), 199, seed=1)
-    assert result["global_order_excess"] > 5.0
+    assert result["global_order_debiased"] > 0.5
+    assert result["global_order_excess"] == result["global_order_debiased"]
     assert result["global_order_p"] <= 0.01
 
 
@@ -167,14 +168,14 @@ def test_fewer_nuclei_raise_the_floor():
         for n in (500, 2000, 8000)
     ]
     assert floors[0] > floors[1] > floors[2]
-    # Excess is what removes the confound: same alignment, same excess.
-    excesses = [
+    # The debiased effect stays stable rather than growing as sqrt(N).
+    corrected = [
         global_order_null(_nuclei(n=n, spread=0.5, seed=12), 199, seed=0)[
-            "global_order_excess"
+            "global_order_debiased"
         ]
         for n in (2000, 8000)
     ]
-    assert excesses[1] / excesses[0] > 1.4
+    assert corrected[1] == pytest.approx(corrected[0], rel=0.05)
 
 
 def test_null_is_reproducible_and_seed_dependent():
