@@ -200,6 +200,30 @@ def test_drift_is_estimated_and_removable():
     assert corrected.loc[-0.5, "mean_speed_px_per_frame"] < 1.0
 
 
+def test_missing_drift_frame_keeps_last_cumulative_offset():
+    tracks = pd.DataFrame(
+        {
+            "track_id": [0, 0, 0, 0],
+            "frame": [0, 1, 2, 3],
+            "x_px": [10.0, 12.0, 12.0, 14.0],
+            "y_px": [5.0, 5.0, 5.0, 5.0],
+            "charge": [0.5] * 4,
+        }
+    )
+    # No estimate at frame 2: its correction must remain at the frame-1 offset,
+    # not jump back to zero.
+    drift = pd.DataFrame(
+        {
+            "frame": [1, 3],
+            "drift_x_px": [2.0, 2.0],
+            "drift_y_px": [0.0, 0.0],
+            "n_steps": [1, 1],
+        }
+    )
+    corrected = subtract_drift(tracks, drift)
+    assert corrected["x_px"].tolist() == [10.0, 10.0, 10.0, 10.0]
+
+
 # ----------------------------------------------------------------- kinetics
 def test_kinetics_counts_births_and_deaths():
     frames = [
