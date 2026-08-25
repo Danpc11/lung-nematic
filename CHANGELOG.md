@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Opposite-charge birth/death pairing diagnostics with a spatial null model.
+  Pair enrichment distinguishes physical nucleation and annihilation from
+  detector flicker without diagnosing the tracker from its own chosen links.
+- Pair nucleation counts and calibrated rates in `defect_kinetics.tsv`. Initial
+  frame defects are excluded because they are an initial condition, not births.
+- Direct MP4 input with metadata provenance, encoded-order tests, and a warning
+  for excess director-field mass near compression-prone image axes. Container
+  FPS is never used as the acquisition interval; original TIFFs remain preferred.
+
 - `global_order_null` and `expected_order_under_randomness` in `nematic`:
   a permutation floor for the global order parameter. `S` is biased upward as
   ~`1/sqrt(N_eff)`, so it is confounded with nuclei count and tissue area and a
@@ -77,6 +86,15 @@ All notable changes to this project are documented here. The format follows
   design in which `beta` is not estimable.
 
 ### Changed
+
+- The CLI now presents pair nucleation rate as the primary activity observable.
+  Velocity contrast is retained in the table but no longer interpreted as the
+  activity signature because 3--4-frame defect lifetimes do not support a
+  robust motion estimate.
+- Short-track and orphan warnings now defer to opposite-charge pair enrichment.
+  Enriched paired turnover indicates physical birth/death and does not justify
+  increasing the linking gate; only near-null pairing triggers detector and
+  tracker checks.
 
 - **`lungtwin` no longer claims structural identifiability.** `analyze` computes
   the numerical rank of a finite-difference sensitivity matrix at a single
