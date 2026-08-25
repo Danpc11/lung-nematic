@@ -214,3 +214,91 @@ def test_charge_balance_handles_no_defects():
     result = charge_balance(pd.DataFrame({"charge": []}, dtype=float))
     assert result["n_plus"] == 0
     assert np.isnan(result["ratio"])
+
+
+# ------------------------------------------------- API contract with the package
+def test_histology_sweep_calls_the_package_api_correctly(monkeypatch):
+    """Pins the signatures crossmap depends on.
+
+    These were assumed rather than checked when the module was written, and all
+    three were wrong: make_tissue_mask takes only the image and returns a tuple,
+    segment_nuclei takes (mask, hed, config) and returns a tuple, and
+    detect_multiscale_defects takes no shape argument. Nothing caught it because
+    only the gel path had been exercised. Fakes here mean a future signature
+    change fails loudly instead of at the first real run.
+    """
+    from lung_nematic import crossmap
+
+    shape = (64, 64)
+    mask = np.ones(shape, dtype=bool)
+    hed = np.zeros(shape + (3,))
+    nuclei = pd.DataFrame({
+        "x_px": [10.0, 40.0], "y_px": [10.0, 40.0],
+        "theta_rad": [0.2, 1.1], "anisotropy_weight": [0.9, 0.8],
+    })
+    calls = {}
+
+    def fake_mask(rgb):
+        calls["mask_args"] = 1
+        return mask, hed
+
+    def fake_segment(tissue_mask, hed_image, config):
+        calls["segment_args"] = 3
+        return np.zeros(shape, dtype=int), nuclei
+
+    def fake_select(table, config):
+        return table
+
+    def fake_field(oriented, field_shape, sigma_px):
+        return {
+            "theta": np.full(shape, 0.3),
+            "order": np.full(shape, 0.7),
+            "density": np.ones(shape),
+        }
+
+    def fake_defects(oriented, tissue_mask, config):
+        calls["defect_args"] = 3
+        return (
+            pd.DataFrame({"x_px": [20.0], "y_px": [20.0], "charge": [0.5]}),
+            {},
+            pd.DataFrame(),
+        )
+
+    monkeypatch.setattr(crossmap, "make_tissue_mask", fake_mask)
+    monkeypatch.setattr(crossmap, "segment_nuclei", fake_segment)
+    monkeypatch.setattr(crossmap, "select_oriented_nuclei", fake_select)
+    monkeypatch.setattr(crossmap, "compute_nematic_field", fake_field)
+    monkeypatch.setattr(crossmap, "detect_multiscale_defects", fake_defects)
+    monkeypatch.setattr(crossmap, "orientation_correlation_length",
+                        lambda field, m: 30.0)
+
+    table = crossmap.histology_scale_sweep(
+        np.zeros(shape + (3,), dtype=np.uint8),
+        crossmap.AnalysisConfig() if hasattr(crossmap, "AnalysisConfig")
+        else __import__("lung_nematic.config", fromlist=["x"]).load_default_config(),
+        (8.0, 15.0),
+        0.114679,
+    )
+    assert calls == {"mask_args": 1, "segment_args": 3, "defect_args": 3}
+    assert list(table.sigma_um) == [8.0, 15.0]
+    assert (table.n_defects == 1).all()
+    assert table.rho_xi2.notna().all()
+
+
+def test_histology_sweep_refuses_an_image_with_no_oriented_nuclei(monkeypatch):
+    from lung_nematic import crossmap
+    from lung_nematic.config import load_default_config
+
+    shape = (32, 32)
+    monkeypatch.setattr(crossmap, "make_tissue_mask",
+                        lambda rgb: (np.ones(shape, bool), np.zeros(shape + (3,))))
+    monkeypatch.setattr(crossmap, "segment_nuclei",
+                        lambda m, h, c: (np.zeros(shape, int), pd.DataFrame()))
+    monkeypatch.setattr(crossmap, "select_oriented_nuclei",
+                        lambda table, config: pd.DataFrame())
+
+    with pytest.raises(ValueError, match="no oriented nuclei"):
+        crossmap.histology_scale_sweep(
+            np.zeros(shape + (3,), dtype=np.uint8), load_default_config(),
+            (8.0,), 0.114679,
+        )
