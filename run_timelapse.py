@@ -181,6 +181,12 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Linking gate. Check track_summary afterwards: a "
                             "median track length of 1-2 frames means this is "
                             "too tight and real trajectories are being broken.")
+    track.add_argument(
+        "--max-gap", type=int, default=0,
+        help="Missing intermediate frames a track may survive (default 0). "
+             "Try 1 for intermittent detections; the displacement gate is "
+             "scaled by the elapsed number of frames.",
+    )
     track.add_argument("--force-drift-correction", action="store_true",
                        help="Subtract drift even when the charge classes are "
                             "badly imbalanced. Off by default, because there "
@@ -323,8 +329,11 @@ def main(argv=None) -> int:
         )
         metrics["stiffness_kPa"] = stiffness
 
-        raw = track_defects(defect_frames,
-                            max_displacement_px=args.max_displacement_px)
+        raw = track_defects(
+            defect_frames,
+            max_displacement_px=args.max_displacement_px,
+            max_gap=args.max_gap,
+        )
 
         n_plus = int((raw.charge > 0).sum()) if len(raw) else 0
         n_minus = int((raw.charge < 0).sum()) if len(raw) else 0
