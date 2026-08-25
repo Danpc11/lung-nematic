@@ -113,18 +113,32 @@ def enclosed_charge_from_boundary(
         return {"enclosed_charge": float("nan"), "n_boundary_points": 0,
                 "euler_characteristic": euler_characteristic(mask)}
 
-    outline = max(contours, key=len)
-    rows = np.clip(np.round(outline[:, 0]).astype(int), 0, theta.shape[0] - 1)
-    cols = np.clip(np.round(outline[:, 1]).astype(int), 0, theta.shape[1] - 1)
-    angles = theta[rows, cols]
-
-    steps = np.diff(np.r_[angles, angles[0]])
-    # A director step is only unambiguous within a half-turn; wrapping to
-    # (-pi/2, pi/2] picks the smallest consistent rotation at each step.
-    steps = (steps + np.pi / 2) % np.pi - np.pi / 2
+    # ``find_contours`` orients boundaries of a binary domain consistently:
+    # outer boundaries and hole boundaries wind in opposite directions.  That
+    # sign is exactly what the boundary integral needs.  Keeping only the
+    # longest contour silently treated an annulus as a disc and ignored every
+    # component except the largest, while ``euler_characteristic`` below still
+    # counted all of them.  Sum every oriented contour so the two routes refer
+    # to the same domain topology.
+    total_rotation = 0.0
+    n_boundary_points = 0
+    for outline in contours:
+        rows = np.clip(
+            np.round(outline[:, 0]).astype(int), 0, theta.shape[0] - 1
+        )
+        cols = np.clip(
+            np.round(outline[:, 1]).astype(int), 0, theta.shape[1] - 1
+        )
+        angles = theta[rows, cols]
+        steps = np.diff(np.r_[angles, angles[0]])
+        # A director step is only unambiguous within a half-turn; wrapping to
+        # (-pi/2, pi/2] picks the smallest consistent rotation at each step.
+        steps = (steps + np.pi / 2) % np.pi - np.pi / 2
+        total_rotation += float(steps.sum())
+        n_boundary_points += len(outline)
     return {
-        "enclosed_charge": float(steps.sum() / (2 * np.pi)),
-        "n_boundary_points": len(outline),
+        "enclosed_charge": float(total_rotation / (2 * np.pi)),
+        "n_boundary_points": n_boundary_points,
         "euler_characteristic": euler_characteristic(mask),
     }
 
