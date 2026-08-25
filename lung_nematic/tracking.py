@@ -4,16 +4,13 @@ Why this module exists
 ----------------------
 Every other analysis in this package describes a single frame. A time lapse of
 cells on a calibrated gel carries something a fixed image cannot: whether the
-nematic is *active*.
+nematic continually creates and annihilates opposite-charge defect pairs.
 
-Two observables separate an active nematic from a passive one, and both need
-tracks rather than per-frame counts.
-
-``+1/2`` defects self-propel; ``-1/2`` defects do not. A ``+1/2`` defect has a
-polar axis, so an active stress field drives it along that axis. A ``-1/2``
-defect is three-fold symmetric and has no such direction. Measuring
-``speed(+1/2) > speed(-1/2)`` is therefore a direct test of activity, and the
-difference is proportional to it.
+Pair turnover is the primary activity observable for these data. Defects live
+only three to four frames, leaving too few displacement steps for a robust
+``+1/2`` versus ``-1/2`` speed contrast. Kinematic tables remain useful for
+quality control and future higher-frequency acquisitions, but they must not be
+treated as an independent activity measurement here.
 
 A passive nematic coarsens: defect density decays as a power law and the
 texture orders out. An active one does not - activity keeps nucleating pairs,
@@ -21,9 +18,9 @@ so the density saturates at a steady state set by the ratio of activity to
 elastic constant. Whether ``defect_density(t)`` decays or plateaus, and where
 the plateau sits, is a second, independent estimate of the same activity.
 
-Two independent estimates of one quantity is the point. If both scale together
-across a stiffness series, that is hard to explain as an artefact of
-segmentation or drift.
+Pair enrichment over a spatial null is essential: simultaneous unpaired
+detections may be detector flicker, while nearby opposite-charge births and
+deaths are the topology expected from active-nematic turnover.
 
 Stage drift
 -----------
@@ -330,10 +327,12 @@ def _step_table(tracks: pd.DataFrame) -> pd.DataFrame:
 
 
 def motility_by_charge(tracks: pd.DataFrame) -> pd.DataFrame:
-    """Speed statistics per charge class - the activity signature.
+    """Descriptive speed statistics per charge class.
 
     In an active nematic the ``+1/2`` class is faster than the ``-1/2`` class,
-    and the contrast between them scales with activity.
+    and the contrast between them can scale with activity. In the present data,
+    however, 3--4-frame lifetimes make this contrast too noisy to use as the
+    activity observable; use pair nucleation instead.
 
     Remove stage drift first. Drift adds a common velocity vector, and since
     speed is a magnitude and propulsion directions are independent, it inflates
@@ -367,25 +366,36 @@ def motility_by_charge(tracks: pd.DataFrame) -> pd.DataFrame:
 def defect_kinetics(
     tracks: pd.DataFrame,
     tissue_area_mm2_by_frame: dict[int, float] | None = None,
+    seconds_per_frame: float | None = None,
+    pair_radius_px: float = 100.0,
 ) -> pd.DataFrame:
-    """Defect counts per frame, plus births and deaths.
+    """Defect counts, turnover, and opposite-charge nucleation per frame.
 
     ``births`` counts tracks starting at that frame and ``deaths`` counts tracks
     ending at the previous one. In a coarsening passive nematic deaths exceed
     births and the count decays; in an active steady state the two balance and
     the count plateaus. That balance is the cleanest way to tell the two regimes
-    apart without fitting anything.
+    apart without fitting anything. Births in the first frame describe the
+    initial population and are deliberately excluded from nucleation.
+
+    A nucleation pair is a one-to-one opposite-charge match within
+    ``pair_radius_px``. One-to-one assignment prevents a dense cluster from
+    counting the same event more than once. Physical rates require both the
+    covered area and ``seconds_per_frame``; otherwise the pair count is still
+    returned without fabricating a time calibration.
     """
     if tracks.empty:
         return pd.DataFrame(
             columns=["frame", "n_defects", "n_plus_half", "n_minus_half",
-                     "births", "deaths"]
+                     "births", "deaths", "nucleation_pairs"]
         )
 
     frames = np.arange(int(tracks["frame"].min()),
                        int(tracks["frame"].max()) + 1)
     first = tracks.groupby("track_id")["frame"].min()
     last = tracks.groupby("track_id")["frame"].max()
+    birth_rows = tracks.merge(first.rename("first_frame"), on="track_id")
+    birth_rows = birth_rows[birth_rows["frame"] == birth_rows["first_frame"]]
 
     records = []
     for frame in frames:
@@ -398,16 +408,142 @@ def defect_kinetics(
                 "n_minus_half": int((present["charge"] < 0).sum()),
                 "births": int((first == frame).sum()) if frame > frames[0] else 0,
                 "deaths": int((last == frame - 1).sum()) if frame > frames[0] else 0,
+                "nucleation_pairs": (
+                    _opposite_charge_pairs(
+                        birth_rows[birth_rows["frame"] == frame], pair_radius_px
+                    )
+                    if frame > frames[0] else 0
+                ),
             }
         )
     table = pd.DataFrame(records)
 
     if tissue_area_mm2_by_frame:
         area = table["frame"].map(tissue_area_mm2_by_frame)
+        table["covered_area_mm2"] = area
         table["defect_density_mm2"] = np.where(
             area > 0, table["n_defects"] / area, np.nan
         )
+        if seconds_per_frame is not None:
+            if seconds_per_frame <= 0:
+                raise ValueError("seconds_per_frame must be positive")
+            table["pair_nucleation_rate_mm2_h"] = np.where(
+                area > 0,
+                table["nucleation_pairs"] / area * 3600.0 / seconds_per_frame,
+                np.nan,
+            )
     return table
+
+
+def _opposite_charge_pairs(events: pd.DataFrame, radius_px: float) -> int:
+    """Return a maximum one-to-one matching of opposite-charge events."""
+    if radius_px <= 0:
+        raise ValueError("radius_px must be positive")
+    plus = events.loc[events["charge"] > 0, ["x_px", "y_px"]].to_numpy(float)
+    minus = events.loc[events["charge"] < 0, ["x_px", "y_px"]].to_numpy(float)
+    if not len(plus) or not len(minus):
+        return 0
+    distance = np.linalg.norm(plus[:, None, :] - minus[None, :, :], axis=2)
+    rows, columns = linear_sum_assignment(np.where(distance <= radius_px,
+                                                    distance, 1e12))
+    return int(np.sum(distance[rows, columns] <= radius_px))
+
+
+def pair_events(
+    frames_or_tracks: list[pd.DataFrame] | pd.DataFrame,
+    radius_px: float = 100.0,
+) -> dict[str, float | int]:
+    """Measure same-frame opposite-charge pairing at births and deaths.
+
+    The input may be a track table or per-frame tables carrying ``track_id``.
+    Tracks are required because birth and death are identity events; inferring
+    them from nearest neighbours would repeat the circular tracking diagnostic
+    this statistic is intended to replace.
+
+    The null randomises the negative event positions uniformly within the
+    observed field rectangle, retaining each frame's event counts. DataFrames
+    may provide exact ``width_px`` and ``height_px`` in ``attrs``; otherwise the
+    observed coordinate extent is used. A fixed seed makes CLI diagnostics and
+    tests reproducible.
+    """
+    if radius_px <= 0:
+        raise ValueError("radius_px must be positive")
+    tracks = _coerce_tracks(frames_or_tracks)
+    if tracks.empty:
+        return _empty_pair_events()
+
+    first = tracks.groupby("track_id")["frame"].min()
+    last = tracks.groupby("track_id")["frame"].max()
+    marked = tracks.merge(first.rename("first_frame"), on="track_id")
+    marked = marked.merge(last.rename("last_frame"), on="track_id")
+    first_frame, last_frame = int(tracks.frame.min()), int(tracks.frame.max())
+    births = marked[(marked.frame == marked.first_frame)
+                    & (marked.frame > first_frame)]
+    deaths = marked[(marked.frame == marked.last_frame)
+                    & (marked.frame < last_frame)]
+
+    width = float(tracks.attrs.get("width_px", tracks.x_px.max() + 1))
+    height = float(tracks.attrs.get("height_px", tracks.y_px.max() + 1))
+    rng = np.random.default_rng(0)
+    result: dict[str, float | int] = {}
+    for name, events in (("birth", births), ("death", deaths)):
+        paired, total = _paired_event_count(events, radius_px)
+        null_fractions = []
+        for _ in range(200):
+            randomised = events.copy()
+            negative = randomised.charge < 0
+            randomised.loc[negative, "x_px"] = rng.uniform(0, width, negative.sum())
+            randomised.loc[negative, "y_px"] = rng.uniform(0, height, negative.sum())
+            null_paired, _ = _paired_event_count(randomised, radius_px)
+            null_fractions.append(null_paired / total if total else np.nan)
+        result[f"n_{name}_events"] = total
+        result[f"n_paired_{name}_events"] = paired
+        result[f"paired_{name}_fraction"] = paired / total if total else np.nan
+        result[f"null_paired_{name}_fraction"] = (
+            float(np.nanmean(null_fractions)) if total else np.nan
+        )
+    return result
+
+
+def _paired_event_count(events: pd.DataFrame, radius_px: float) -> tuple[int, int]:
+    """Count event members belonging to a one-to-one opposite-charge pair."""
+    pairs = sum(
+        _opposite_charge_pairs(group, radius_px)
+        for _, group in events.groupby("frame")
+    )
+    return 2 * pairs, len(events)
+
+
+def _coerce_tracks(value: list[pd.DataFrame] | pd.DataFrame) -> pd.DataFrame:
+    if isinstance(value, pd.DataFrame):
+        tracks = value.copy()
+        attrs = value.attrs.copy()
+    else:
+        rows = []
+        attrs = {}
+        for frame, table in enumerate(value):
+            if "track_id" not in table.columns:
+                raise ValueError("per-frame tables must contain track_id")
+            rows.append(table.assign(frame=frame))
+            attrs.update(table.attrs)
+        tracks = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+    required = {"track_id", "frame", "x_px", "y_px", "charge"}
+    missing = sorted(required - set(tracks.columns))
+    if missing and not tracks.empty:
+        raise ValueError(f"tracks are missing columns: {missing}")
+    tracks.attrs.update(attrs)
+    return tracks
+
+
+def _empty_pair_events() -> dict[str, float | int]:
+    return {
+        "n_birth_events": 0, "n_paired_birth_events": 0,
+        "paired_birth_fraction": np.nan,
+        "null_paired_birth_fraction": np.nan,
+        "n_death_events": 0, "n_paired_death_events": 0,
+        "paired_death_fraction": np.nan,
+        "null_paired_death_fraction": np.nan,
+    }
 
 
 def calibrate(
