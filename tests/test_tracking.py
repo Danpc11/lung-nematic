@@ -153,6 +153,35 @@ def test_handles_empty_frames_without_crashing():
     assert tracks.track_id.nunique() == 2
 
 
+def test_max_gap_closes_one_missing_frame():
+    frames = [
+        pd.DataFrame({"x_px": [10.0], "y_px": [10.0], "charge": [0.5]}),
+        pd.DataFrame(columns=["x_px", "y_px", "charge"], dtype=float),
+        pd.DataFrame({"x_px": [18.0], "y_px": [10.0], "charge": [0.5]}),
+    ]
+    tracks = track_defects(frames, max_displacement_px=5, max_gap=1)
+    assert tracks.track_id.nunique() == 1
+    assert tracks.frame.tolist() == [0, 2]
+    assert track_summary(tracks).loc[0, "mean_speed_px_per_frame"] == 4.0
+
+
+def test_gap_link_scales_gate_by_elapsed_frames():
+    frames = [
+        pd.DataFrame({"x_px": [0.0], "y_px": [0.0], "charge": [0.5]}),
+        pd.DataFrame(columns=["x_px", "y_px", "charge"], dtype=float),
+        pd.DataFrame({"x_px": [9.0], "y_px": [0.0], "charge": [0.5]}),
+    ]
+    linked = track_defects(frames, max_displacement_px=5, max_gap=1)
+    assert linked.track_id.nunique() == 1
+
+
+def test_rejects_invalid_max_gap():
+    with pytest.raises(ValueError, match="non-negative"):
+        track_defects(_series(), max_displacement_px=10, max_gap=-1)
+    with pytest.raises(TypeError, match="integer"):
+        track_defects(_series(), max_displacement_px=10, max_gap=1.5)
+
+
 # -------------------------------------------------------------------- drift
 def _contrast(tracks):
     speeds = motility_by_charge(tracks).set_index("charge")
