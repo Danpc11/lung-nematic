@@ -1,0 +1,378 @@
+"""Track topological defects across time-lapse frames.
+
+Why this module exists
+----------------------
+Every other analysis in this package describes a single frame. A time lapse of
+cells on a calibrated gel carries something a fixed image cannot: whether the
+nematic is *active*.
+
+Two observables separate an active nematic from a passive one, and both need
+tracks rather than per-frame counts.
+
+``+1/2`` defects self-propel; ``-1/2`` defects do not. A ``+1/2`` defect has a
+polar axis, so an active stress field drives it along that axis. A ``-1/2``
+defect is three-fold symmetric and has no such direction. Measuring
+``speed(+1/2) > speed(-1/2)`` is therefore a direct test of activity, and the
+difference is proportional to it.
+
+A passive nematic coarsens: defect density decays as a power law and the
+texture orders out. An active one does not - activity keeps nucleating pairs,
+so the density saturates at a steady state set by the ratio of activity to
+elastic constant. Whether ``defect_density(t)`` decays or plateaus, and where
+the plateau sits, is a second, independent estimate of the same activity.
+
+Two independent estimates of one quantity is the point. If both scale together
+across a stiffness series, that is hard to explain as an artefact of
+segmentation or drift.
+
+Stage drift
+-----------
+Uncorrected stage drift adds a common velocity *vector* to every defect, and
+speed is the magnitude of that sum. Because self-propelled defects head in
+independent directions, ``|v_propulsion + v_drift|`` is not
+``|v_propulsion| + |v_drift|``, so drift does not merely offset both charge
+classes - it compresses the contrast between them. Measured on synthetic
+frames, a drift of 2 px/frame against a propulsion of 3 px/frame shrinks
+``speed(+1/2) - speed(-1/2)`` from 2.51 to 1.48, a 41% loss.
+
+So drift must be removed, not reasoned around: run ``estimate_drift`` and
+``subtract_drift`` before reading any speed, and treat unregistered frames as
+giving a lower bound on activity rather than an estimate of it.
+
+Units
+-----
+Everything here works in pixels and frames. Calibration to micrometres and
+seconds is applied at the end by ``calibrate``, so the tracking does not have
+to be redone when the acquisition metadata is finally located.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+from scipy.optimize import linear_sum_assignment
+
+REQUIRED_COLUMNS = ("x_px", "y_px", "charge")
+
+
+def track_defects(
+    frames: list[pd.DataFrame],
+    max_displacement_px: float,
+    *,
+    charge_tolerance: float = 1e-6,
+) -> pd.DataFrame:
+    """Link per-frame defect tables into tracks.
+
+    Linking is solved separately within each charge class, which enforces
+    charge conservation structurally rather than by post-hoc filtering: a
+    ``+1/2`` can only ever be matched to another ``+1/2``. A defect that
+    genuinely changes charge is not a moving defect, it is one defect
+    annihilating and another appearing, and the track table should say so.
+
+    ``max_displacement_px`` gates the assignment. The Hungarian solver returns a
+    globally optimal matching even when every pair is implausibly far apart, so
+    without a gate a defect that annihilated would be linked to an unrelated one
+    across the field. Set it from the physics: a few times the expected
+    per-frame displacement, and well below the typical defect separation.
+
+    Returns one row per (track, frame) with ``track_id``, ``frame``, ``x_px``,
+    ``y_px`` and ``charge``. Tracks of length 1 are kept - a defect that appears
+    and annihilates immediately is data about the nucleation rate, not noise to
+    discard.
+    """
+    if max_displacement_px <= 0:
+        raise ValueError("max_displacement_px must be positive")
+    for index, table in enumerate(frames):
+        missing = [c for c in REQUIRED_COLUMNS if c not in table.columns]
+        if missing:
+            raise ValueError(f"frame {index} is missing columns: {missing}")
+
+    rows: list[dict] = []
+    next_track_id = 0
+    # Maps a row index in the previous frame to the track it belongs to.
+    previous_tracks: dict[int, int] = {}
+
+    for frame_index, table in enumerate(frames):
+        table = table.reset_index(drop=True)
+        current_tracks: dict[int, int] = {}
+
+        if frame_index > 0 and len(table) and len(frames[frame_index - 1]):
+            previous = frames[frame_index - 1].reset_index(drop=True)
+            for charge in _charge_classes(previous, table, charge_tolerance):
+                previous_rows = _rows_with_charge(previous, charge,
+                                                  charge_tolerance)
+                current_rows = _rows_with_charge(table, charge,
+                                                 charge_tolerance)
+                if not len(previous_rows) or not len(current_rows):
+                    continue
+                for previous_row, current_row in _assign(
+                    previous.loc[previous_rows], table.loc[current_rows],
+                    max_displacement_px,
+                ):
+                    source = previous_rows[previous_row]
+                    target = current_rows[current_row]
+                    if source in previous_tracks:
+                        current_tracks[target] = previous_tracks[source]
+
+        for row_index in range(len(table)):
+            if row_index not in current_tracks:
+                current_tracks[row_index] = next_track_id
+                next_track_id += 1
+            rows.append(
+                {
+                    "track_id": current_tracks[row_index],
+                    "frame": frame_index,
+                    "x_px": float(table.loc[row_index, "x_px"]),
+                    "y_px": float(table.loc[row_index, "y_px"]),
+                    "charge": float(table.loc[row_index, "charge"]),
+                }
+            )
+
+        previous_tracks = current_tracks
+
+    return pd.DataFrame(
+        rows,
+        columns=["track_id", "frame", "x_px", "y_px", "charge"],
+    )
+
+
+def _charge_classes(a: pd.DataFrame, b: pd.DataFrame, tolerance: float):
+    values = np.concatenate([a["charge"].to_numpy(), b["charge"].to_numpy()])
+    unique = []
+    for value in values:
+        if not any(abs(value - seen) <= tolerance for seen in unique):
+            unique.append(float(value))
+    return unique
+
+
+def _rows_with_charge(table: pd.DataFrame, charge: float, tolerance: float):
+    mask = (table["charge"] - charge).abs() <= tolerance
+    return list(np.flatnonzero(mask.to_numpy()))
+
+
+def _assign(previous: pd.DataFrame, current: pd.DataFrame, gate: float):
+    """Gated Hungarian assignment. Yields (previous_row, current_row) pairs."""
+    before = previous[["x_px", "y_px"]].to_numpy(dtype=float)
+    after = current[["x_px", "y_px"]].to_numpy(dtype=float)
+    distance = np.linalg.norm(before[:, None, :] - after[None, :, :], axis=2)
+
+    # Forbidden pairs get a cost far above any admissible one, so the solver
+    # only picks them when it has no alternative - and those picks are then
+    # dropped by the gate below.
+    cost = np.where(distance <= gate, distance, 1e9)
+    rows, columns = linear_sum_assignment(cost)
+    for row, column in zip(rows, columns):
+        if distance[row, column] <= gate:
+            yield int(row), int(column)
+
+
+def track_summary(tracks: pd.DataFrame) -> pd.DataFrame:
+    """Per-track kinematics, in pixels per frame."""
+    if tracks.empty:
+        return pd.DataFrame(
+            columns=["track_id", "charge", "n_frames", "first_frame",
+                     "last_frame", "mean_speed_px_per_frame",
+                     "net_displacement_px", "straightness"]
+        )
+
+    records = []
+    for track_id, group in tracks.sort_values("frame").groupby("track_id"):
+        x = group["x_px"].to_numpy()
+        y = group["y_px"].to_numpy()
+        steps = np.hypot(np.diff(x), np.diff(y))
+        path = float(steps.sum())
+        net = float(np.hypot(x[-1] - x[0], y[-1] - y[0]))
+        records.append(
+            {
+                "track_id": int(track_id),
+                "charge": float(group["charge"].iloc[0]),
+                "n_frames": len(group),
+                "first_frame": int(group["frame"].iloc[0]),
+                "last_frame": int(group["frame"].iloc[-1]),
+                "mean_speed_px_per_frame": (
+                    float(steps.mean()) if steps.size else float("nan")
+                ),
+                "net_displacement_px": net,
+                # 1 means ballistic, near 0 means the defect wandered without
+                # going anywhere. Self-propelled defects should be closer to 1
+                # than diffusive ones over the same number of frames.
+                "straightness": (net / path) if path > 0 else float("nan"),
+            }
+        )
+    return pd.DataFrame(records)
+
+
+def estimate_drift(tracks: pd.DataFrame) -> pd.DataFrame:
+    """Median per-frame displacement of all tracked defects.
+
+    A rigid translation of the field - stage drift - moves every defect
+    identically, so the median step is an estimate of it. This is only valid
+    when defect motion is otherwise uncorrelated; if the whole sheet is flowing,
+    the median contains real physics and subtracting it removes signal. Compare
+    against the ``+1/2`` and ``-1/2`` medians separately before subtracting: if
+    they differ, the common component is not pure drift.
+    """
+    steps = _step_table(tracks)
+    if steps.empty:
+        return pd.DataFrame(columns=["frame", "drift_x_px", "drift_y_px",
+                                     "n_steps"])
+    grouped = steps.groupby("frame")
+    return pd.DataFrame(
+        {
+            "frame": grouped.size().index,
+            "drift_x_px": grouped["dx_px"].median().to_numpy(),
+            "drift_y_px": grouped["dy_px"].median().to_numpy(),
+            "n_steps": grouped.size().to_numpy(),
+        }
+    ).reset_index(drop=True)
+
+
+def subtract_drift(tracks: pd.DataFrame, drift: pd.DataFrame) -> pd.DataFrame:
+    """Remove a cumulative per-frame translation from every track."""
+    drift = drift.sort_values("frame")
+    offsets = {0: (0.0, 0.0)}
+    cumulative_x = cumulative_y = 0.0
+    for _, row in drift.iterrows():
+        cumulative_x += float(row["drift_x_px"])
+        cumulative_y += float(row["drift_y_px"])
+        offsets[int(row["frame"])] = (cumulative_x, cumulative_y)
+
+    corrected = tracks.copy()
+    shift = corrected["frame"].map(lambda f: offsets.get(int(f), (0.0, 0.0)))
+    corrected["x_px"] = corrected["x_px"] - shift.map(lambda s: s[0])
+    corrected["y_px"] = corrected["y_px"] - shift.map(lambda s: s[1])
+    return corrected
+
+
+def _step_table(tracks: pd.DataFrame) -> pd.DataFrame:
+    if tracks.empty:
+        return pd.DataFrame(columns=["track_id", "frame", "charge", "dx_px",
+                                     "dy_px", "speed_px_per_frame"])
+    ordered = tracks.sort_values(["track_id", "frame"])
+    grouped = ordered.groupby("track_id")
+    step = pd.DataFrame(
+        {
+            "track_id": ordered["track_id"],
+            "frame": ordered["frame"],
+            "charge": ordered["charge"],
+            "dx_px": grouped["x_px"].diff(),
+            "dy_px": grouped["y_px"].diff(),
+            "gap": grouped["frame"].diff(),
+        }
+    ).dropna(subset=["dx_px"])
+    # Only consecutive frames give a per-frame velocity; this tracker does not
+    # close gaps, but guarding here keeps the function correct if it ever does.
+    step = step[step["gap"] == 1]
+    step["speed_px_per_frame"] = np.hypot(step["dx_px"], step["dy_px"])
+    return step.drop(columns=["gap"])
+
+
+def motility_by_charge(tracks: pd.DataFrame) -> pd.DataFrame:
+    """Speed statistics per charge class - the activity signature.
+
+    In an active nematic the ``+1/2`` class is faster than the ``-1/2`` class,
+    and the contrast between them scales with activity.
+
+    Remove stage drift first. Drift adds a common velocity vector, and since
+    speed is a magnitude and propulsion directions are independent, it inflates
+    both classes *and* compresses the contrast - it is not a common offset that
+    cancels. On unregistered frames this figure is a lower bound on activity.
+    """
+    steps = _step_table(tracks)
+    if steps.empty:
+        return pd.DataFrame(
+            columns=["charge", "n_steps", "n_tracks",
+                     "mean_speed_px_per_frame", "median_speed_px_per_frame",
+                     "sem_speed_px_per_frame"]
+        )
+    grouped = steps.groupby("charge")["speed_px_per_frame"]
+    summary = pd.DataFrame(
+        {
+            "charge": grouped.mean().index,
+            "n_steps": grouped.size().to_numpy(),
+            "mean_speed_px_per_frame": grouped.mean().to_numpy(),
+            "median_speed_px_per_frame": grouped.median().to_numpy(),
+            "sem_speed_px_per_frame": (
+                grouped.std(ddof=1) / np.sqrt(grouped.size())
+            ).to_numpy(),
+        }
+    ).reset_index(drop=True)
+    counts = steps.groupby("charge")["track_id"].nunique()
+    summary["n_tracks"] = summary["charge"].map(counts).to_numpy()
+    return summary
+
+
+def defect_kinetics(
+    tracks: pd.DataFrame,
+    tissue_area_mm2_by_frame: dict[int, float] | None = None,
+) -> pd.DataFrame:
+    """Defect counts per frame, plus births and deaths.
+
+    ``births`` counts tracks starting at that frame and ``deaths`` counts tracks
+    ending at the previous one. In a coarsening passive nematic deaths exceed
+    births and the count decays; in an active steady state the two balance and
+    the count plateaus. That balance is the cleanest way to tell the two regimes
+    apart without fitting anything.
+    """
+    if tracks.empty:
+        return pd.DataFrame(
+            columns=["frame", "n_defects", "n_plus_half", "n_minus_half",
+                     "births", "deaths"]
+        )
+
+    frames = np.arange(int(tracks["frame"].min()),
+                       int(tracks["frame"].max()) + 1)
+    first = tracks.groupby("track_id")["frame"].min()
+    last = tracks.groupby("track_id")["frame"].max()
+
+    records = []
+    for frame in frames:
+        present = tracks[tracks["frame"] == frame]
+        records.append(
+            {
+                "frame": int(frame),
+                "n_defects": len(present),
+                "n_plus_half": int((present["charge"] > 0).sum()),
+                "n_minus_half": int((present["charge"] < 0).sum()),
+                "births": int((first == frame).sum()) if frame > frames[0] else 0,
+                "deaths": int((last == frame - 1).sum()) if frame > frames[0] else 0,
+            }
+        )
+    table = pd.DataFrame(records)
+
+    if tissue_area_mm2_by_frame:
+        area = table["frame"].map(tissue_area_mm2_by_frame)
+        table["defect_density_mm2"] = np.where(
+            area > 0, table["n_defects"] / area, np.nan
+        )
+    return table
+
+
+def calibrate(
+    table: pd.DataFrame,
+    microns_per_pixel: float,
+    seconds_per_frame: float,
+) -> pd.DataFrame:
+    """Convert pixel/frame columns to micrometre/second columns.
+
+    Applied last so that tracking never has to be repeated when the acquisition
+    metadata turns up. Nothing here can be inferred from the image files: the
+    frame rate stored in an exported video is a playback rate, not the
+    acquisition interval, and using it silently rescales every velocity.
+    """
+    if microns_per_pixel <= 0 or seconds_per_frame <= 0:
+        raise ValueError(
+            "microns_per_pixel and seconds_per_frame must both be positive"
+        )
+    out = table.copy()
+    for column in out.columns:
+        if column.endswith("_px_per_frame"):
+            base = column[: -len("_px_per_frame")]
+            out[f"{base}_um_per_s"] = (
+                out[column] * microns_per_pixel / seconds_per_frame
+            )
+        elif column.endswith("_px"):
+            out[f"{column[:-3]}_um"] = out[column] * microns_per_pixel
+    if "frame" in out.columns:
+        out["time_s"] = out["frame"] * seconds_per_frame
+    return out
