@@ -17,6 +17,7 @@ from lung_nematic.tracking import (
     defect_kinetics,
     estimate_drift,
     motility_by_charge,
+    pair_events,
     subtract_drift,
     track_defects,
     track_summary,
@@ -272,6 +273,52 @@ def test_kinetics_reports_density_when_area_is_given():
     tracks = track_defects(_series(n_frames=3), max_displacement_px=10)
     table = defect_kinetics(tracks, {0: 0.5, 1: 0.5, 2: 0.5})
     assert table.defect_density_mm2.iloc[0] == pytest.approx(12 / 0.5)
+
+
+def _event_tracks(paired: bool) -> pd.DataFrame:
+    rows = [
+        {"track_id": 999, "frame": frame, "x_px": 500.0, "y_px": 500.0,
+         "charge": 0.5}
+        for frame in range(4)
+    ]
+    for index in range(10):
+        plus_x = 50.0 + index * 80
+        minus_x = plus_x + (5.0 if paired else 40.0)
+        for frame in (1, 2):
+            rows.extend([
+                {"track_id": index, "frame": frame, "x_px": plus_x,
+                 "y_px": 100.0, "charge": 0.5},
+                {"track_id": 100 + index, "frame": frame, "x_px": minus_x,
+                 "y_px": 100.0 if paired else 700.0, "charge": -0.5},
+            ])
+    table = pd.DataFrame(rows)
+    table.attrs.update(width_px=1000, height_px=1000)
+    return table
+
+
+def test_pair_events_separates_pair_turnover_from_unpaired_flicker():
+    paired = pair_events(_event_tracks(True), radius_px=20)
+    flicker = pair_events(_event_tracks(False), radius_px=20)
+    assert paired["paired_birth_fraction"] == 1.0
+    assert paired["paired_death_fraction"] == 1.0
+    assert paired["paired_birth_fraction"] > 5 * paired[
+        "null_paired_birth_fraction"
+    ]
+    assert flicker["paired_birth_fraction"] == 0.0
+    assert flicker["paired_death_fraction"] == 0.0
+
+
+def test_pair_nucleation_rate_excludes_initial_population():
+    tracks = _event_tracks(True)
+    table = defect_kinetics(
+        tracks,
+        {frame: 0.5 for frame in range(4)},
+        seconds_per_frame=600,
+        pair_radius_px=20,
+    )
+    assert table.loc[0, "nucleation_pairs"] == 0
+    assert table.loc[1, "nucleation_pairs"] == 10
+    assert table.loc[1, "pair_nucleation_rate_mm2_h"] == pytest.approx(120.0)
 
 
 # -------------------------------------------------------------- calibration
