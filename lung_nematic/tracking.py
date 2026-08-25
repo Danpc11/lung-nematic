@@ -228,7 +228,12 @@ def estimate_drift(tracks: pd.DataFrame) -> pd.DataFrame:
 
 
 def subtract_drift(tracks: pd.DataFrame, drift: pd.DataFrame) -> pd.DataFrame:
-    """Remove a cumulative per-frame translation from every track."""
+    """Remove a cumulative per-frame translation from every track.
+
+    If no drift estimate exists for a frame, retain the latest cumulative
+    offset. Resetting to zero at that frame creates an artificial jump in every
+    corrected trajectory.
+    """
     drift = drift.sort_values("frame")
     offsets = {0: (0.0, 0.0)}
     cumulative_x = cumulative_y = 0.0
@@ -238,7 +243,14 @@ def subtract_drift(tracks: pd.DataFrame, drift: pd.DataFrame) -> pd.DataFrame:
         offsets[int(row["frame"])] = (cumulative_x, cumulative_y)
 
     corrected = tracks.copy()
-    shift = corrected["frame"].map(lambda f: offsets.get(int(f), (0.0, 0.0)))
+    known_frames = np.array(sorted(offsets), dtype=int)
+    known_offsets = [offsets[int(frame)] for frame in known_frames]
+
+    def offset_at(frame):
+        index = int(np.searchsorted(known_frames, int(frame), side="right") - 1)
+        return known_offsets[index] if index >= 0 else (0.0, 0.0)
+
+    shift = corrected["frame"].map(offset_at)
     corrected["x_px"] = corrected["x_px"] - shift.map(lambda s: s[0])
     corrected["y_px"] = corrected["y_px"] - shift.map(lambda s: s[1])
     return corrected
