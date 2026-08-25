@@ -207,6 +207,7 @@ def analyze_image(
         representative_sigma_px=representative_sigma,
         detect_integer_defects=config.detect_integer_defects,
         global_order_null_stats=order_null,
+        field_type=field_type,
     )
     summary["field_type"] = field_type
     summary["overlay_path"] = str(overlay_path)
