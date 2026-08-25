@@ -438,3 +438,99 @@ def calibrate(
     if "frame" in out.columns:
         out["time_s"] = out["frame"] * seconds_per_frame
     return out
+
+
+def detector_stability(
+    frames: list[pd.DataFrame],
+    match_radius_px: float,
+    *,
+    charge_tolerance: float = 1e-6,
+) -> dict:
+    """Measure detector flicker, independently of any tracking.
+
+    Tracking quality confounds two different failures: defects that genuinely
+    move too far to be linked, and detections that appear and vanish between
+    frames. Both produce short tracks, and diagnosing them from the tracks is
+    circular - the steps you measure are the steps the tracker chose to make.
+
+    This looks only at the per-frame detection tables. For every detection it
+    finds the nearest same-charge detection in the next frame, with no
+    assignment and no gate. Two numbers come out:
+
+    ``median_nn_px``
+        How far defects actually move. Compare against ``null_median_nn_px``,
+        the same statistic against a distant frame: if they are similar, there
+        is no frame-to-frame continuity at all and the interval is too coarse.
+    ``orphan_fraction``
+        Detections with no same-charge neighbour within ``match_radius_px``.
+        This is flicker. Above roughly 0.15 the tracker is fighting the
+        detector rather than the physics, and the fix belongs in detection -
+        more scales for the persistence filter - not in the linking gate.
+    """
+    nearest, null_nearest, per_frame_counts = [], [], []
+    rng = np.random.default_rng(0)
+    n_frames = len(frames)
+
+    for index in range(n_frames - 1):
+        current, following = frames[index], frames[index + 1]
+        per_frame_counts.append(len(current))
+        if current.empty or following.empty:
+            continue
+
+        # The null needs a frame far enough away to share no continuity. If
+        # the series is too short to provide one, skip the null rather than
+        # comparing the frame with itself - that returns a distance of zero,
+        # which reads as a measurement rather than as a missing value.
+        candidates = [
+            f for f in range(n_frames)
+            if abs(f - index) > min(10, max(n_frames // 4, 1))
+        ]
+        distant = frames[int(rng.choice(candidates))] if candidates else None
+
+        for charge in sorted(set(current["charge"])):
+            source = current.loc[
+                (current["charge"] - charge).abs() <= charge_tolerance,
+                ["x_px", "y_px"],
+            ].to_numpy(dtype=float)
+            if not len(source):
+                continue
+            comparisons = [(following, nearest)]
+            if distant is not None:
+                comparisons.append((distant, null_nearest))
+            for other, sink in comparisons:
+                target = other.loc[
+                    (other["charge"] - charge).abs() <= charge_tolerance,
+                    ["x_px", "y_px"],
+                ].to_numpy(dtype=float)
+                if not len(target):
+                    continue
+                distance = np.linalg.norm(
+                    source[:, None, :] - target[None, :, :], axis=2
+                )
+                sink.extend(distance.min(axis=1))
+
+    if not nearest:
+        return {
+            "n_comparisons": 0, "median_nn_px": float("nan"),
+            "orphan_fraction": float("nan"), "null_median_nn_px": float("nan"),
+            "count_fluctuation": float("nan"), "mean_count": float("nan"),
+        }
+
+    nearest = np.asarray(nearest)
+    counts = np.asarray(per_frame_counts, dtype=float)
+    return {
+        "n_comparisons": int(nearest.size),
+        "median_nn_px": float(np.median(nearest)),
+        "p90_nn_px": float(np.percentile(nearest, 90)),
+        "orphan_fraction": float(np.mean(nearest > match_radius_px)),
+        "null_median_nn_px": (
+            float(np.median(null_nearest)) if null_nearest else float("nan")
+        ),
+        # Frame-to-frame swing in the raw count, relative to its mean. Real
+        # defect number changes slowly; a large swing is detection noise.
+        "count_fluctuation": (
+            float(np.median(np.abs(np.diff(counts))) / counts.mean())
+            if counts.size > 1 and counts.mean() > 0 else float("nan")
+        ),
+        "mean_count": float(counts.mean()) if counts.size else float("nan"),
+    }
