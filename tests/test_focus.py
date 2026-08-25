@@ -93,6 +93,24 @@ def test_uniform_field_encloses_no_charge():
     assert result["enclosed_charge"] == pytest.approx(0.0, abs=0.02)
 
 
+def test_annulus_sums_outer_and_inner_boundaries():
+    annulus = DISC & ~(((XX - CENTRE) ** 2 + (YY - CENTRE) ** 2) < 30**2)
+    result = enclosed_charge_from_boundary(field(defect_field(1.0)), annulus)
+    assert result["enclosed_charge"] == pytest.approx(0.0, abs=0.02)
+    assert result["euler_characteristic"] == 0
+
+
+def test_disconnected_components_sum_all_boundaries():
+    a = ((XX - 80) ** 2 + (YY - 80) ** 2) < 40**2
+    b = ((XX - 220) ** 2 + (YY - 220) ** 2) < 40**2
+    theta = defect_field(1.0, x=80.0, y=80.0) + defect_field(
+        1.0, x=220.0, y=220.0
+    )
+    result = enclosed_charge_from_boundary(field(theta), a | b)
+    assert result["enclosed_charge"] == pytest.approx(2.0, abs=0.03)
+    assert result["euler_characteristic"] == 2
+
+
 # ------------------------------------------------------------- consistency
 def test_the_two_charge_routes_agree_when_detection_is_correct():
     theta = defect_field(0.5, x=110.0) + defect_field(0.5, x=190.0)
