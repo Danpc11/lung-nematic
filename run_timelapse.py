@@ -51,6 +51,7 @@ from lung_nematic.phase_contrast import analyze_phase_contrast
 from lung_nematic.tracking import (
     calibrate,
     defect_kinetics,
+    detector_stability,
     estimate_drift,
     motility_by_charge,
     subtract_drift,
@@ -166,10 +167,23 @@ def build_parser() -> argparse.ArgumentParser:
     detect = parser.add_argument_group("detection")
     detect.add_argument("--sigma-um", type=float, default=15.0,
                         help="Smoothing scale in um (default 15).")
-    detect.add_argument("--sigma-band-ratio", type=float, default=1.4,
-                        help="Second scale, as a multiple of the first. The "
-                             "multiscale persistence filter needs two scales; "
-                             "one sigma disables it and finds nothing.")
+    detect.add_argument(
+        "--n-scales", type=int, default=4,
+        help=(
+            "Number of smoothing scales. With only two, the persistence filter "
+            "demands detection at 2 of 2 - a knife edge that marginal defects "
+            "step in and out of between frames, which is the main source of "
+            "detector flicker. Four scales with a lower minimum is a far more "
+            "stable criterion."
+        ),
+    )
+    detect.add_argument("--sigma-band-ratio", type=float, default=1.25,
+                        help="Ratio between consecutive scales.")
+    detect.add_argument(
+        "--min-scales", type=int, default=2,
+        help="Scales at which a defect must appear to be kept. Keep this "
+             "below --n-scales; equal to it reproduces the knife edge.",
+    )
     detect.add_argument("--density-quantile", type=float, default=0.10,
                         help="Default 0.10 for phase contrast (0.45 is the "
                              "histology value and discards half a monolayer).")
@@ -182,10 +196,12 @@ def build_parser() -> argparse.ArgumentParser:
                             "median track length of 1-2 frames means this is "
                             "too tight and real trajectories are being broken.")
     track.add_argument(
-        "--max-gap", type=int, default=0,
-        help="Missing intermediate frames a track may survive (default 0). "
-             "Try 1 for intermittent detections; the displacement gate is "
-             "scaled by the elapsed number of frames.",
+        "--max-gap", type=int, default=1,
+        help="Missing intermediate frames a track may survive. Defaults to 1 "
+             "because real detectors flicker: on this cohort roughly a quarter "
+             "of detections turned over per frame, and without gap closing "
+             "each miss became a false death plus a false birth. The "
+             "displacement gate scales with the elapsed number of frames.",
     )
     track.add_argument("--force-drift-correction", action="store_true",
                        help="Subtract drift even when the charge classes are "
@@ -280,15 +296,24 @@ def main(argv=None) -> int:
         print(f"not a directory: {args.frames}", file=sys.stderr)
         return 1
 
+    if args.min_scales > args.n_scales:
+        print("--min-scales cannot exceed --n-scales", file=sys.stderr)
+        return 1
+
     sigma_px = args.sigma_um / args.microns_per_pixel
     if sigma_px < 1.0:
         print(f"sigma {args.sigma_um} um is below one pixel at "
               f"{args.microns_per_pixel} um/px", file=sys.stderr)
         return 1
 
+    sigmas = tuple(
+        sigma_px * args.sigma_band_ratio**index
+        for index in range(args.n_scales)
+    )
     config = replace(
         load_default_config(),
-        sigmas_px=(sigma_px, sigma_px * args.sigma_band_ratio),
+        sigmas_px=sigmas,
+        min_scales_for_persistence=args.min_scales,
         density_quantile=args.density_quantile,
         defect_grid_step_px=args.grid_step_px,
         defect_cluster_radius_px=args.cluster_radius_px,
@@ -314,13 +339,15 @@ def main(argv=None) -> int:
 
     print(f"scale {args.microns_per_pixel:.5f} um/px "
           f"({1 / args.microns_per_pixel:.2f} px/um)")
-    print(f"sigma {args.sigma_um:g} um = "
-          f"({sigma_px:.1f}, {sigma_px * args.sigma_band_ratio:.1f}) px\n")
+    print(f"sigma {args.sigma_um:g} um -> "
+          f"{tuple(round(v, 1) for v in sigmas)} px, "
+          f"persistence {args.min_scales}/{args.n_scales}\n")
 
     args.output.mkdir(parents=True, exist_ok=True)
     all_metrics, all_tracks, all_motility, all_kinetics, all_summaries = (
         [], [], [], [], []
     )
+    all_stability = []
 
     for stiffness, paths in series.items():
         metrics, defect_frames, textures = analyse_series(
@@ -328,6 +355,25 @@ def main(argv=None) -> int:
             render=args.render_mp4,
         )
         metrics["stiffness_kPa"] = stiffness
+
+        # Diagnose the detector BEFORE the tracker. Both failures - defects
+        # moving too far to link, and detections flickering in and out -
+        # produce short tracks, and telling them apart from the tracks is
+        # circular: the steps you measure are the steps the tracker chose to
+        # make. This looks only at the per-frame detections.
+        stability = detector_stability(defect_frames, args.max_displacement_px)
+        stability["stiffness_kPa"] = stiffness
+        all_stability.append(stability)
+        print(f"    detector: {stability['mean_count']:.1f} defects/frame, "
+              f"nn median {stability['median_nn_px']:.0f} px "
+              f"(null {stability['null_median_nn_px']:.0f}), "
+              f"orphans {stability['orphan_fraction']:.0%}, "
+              f"count swing {stability['count_fluctuation']:.0%}")
+        if stability["orphan_fraction"] > 0.15:
+            print("    ! orphans above 15%: the detector is flickering, not "
+                  "the defects moving. Raise --n-scales or lower "
+                  "--min-scales. A higher --density-quantile makes this "
+                  "worse - it removed detections and broke charge balance.")
 
         raw = track_defects(
             defect_frames,
@@ -432,6 +478,7 @@ def main(argv=None) -> int:
         "motility_by_charge.tsv": motility,
         "defect_kinetics.tsv": kinetics,
         "track_summary.tsv": pd.concat(all_summaries, ignore_index=True),
+        "detector_stability.tsv": pd.DataFrame(all_stability),
     }
     for name, table in tables.items():
         table.to_csv(args.output / name, sep="\t", index=False)
