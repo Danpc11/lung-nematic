@@ -136,8 +136,8 @@ def histology_scale_sweep(
     numbers, because the scale at which the density collapses *is* the
     correlation length - so the curve carries its own calibration.
     """
-    tissue_mask = make_tissue_mask(image, config)
-    nuclei = segment_nuclei(image, tissue_mask, config)
+    tissue_mask, hed = make_tissue_mask(image)
+    _, nuclei = segment_nuclei(tissue_mask, hed, config)
     oriented = select_oriented_nuclei(nuclei, config)
     if oriented.empty:
         raise ValueError("no oriented nuclei; cannot sweep scale")
@@ -154,7 +154,7 @@ def histology_scale_sweep(
             continue
         scaled = replace(config, sigmas_px=_band(sigma_px))
         field = compute_nematic_field(oriented, shape, sigma_px)
-        defects = detect_multiscale_defects(oriented, shape, tissue_mask, scaled)
+        defects, _, _ = detect_multiscale_defects(oriented, tissue_mask, scaled)
         xi_px = orientation_correlation_length(field, tissue_mask)
         rows.append(
             {
