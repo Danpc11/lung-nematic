@@ -59,6 +59,7 @@ def track_defects(
     frames: list[pd.DataFrame],
     max_displacement_px: float,
     *,
+    max_gap: int = 0,
     charge_tolerance: float = 1e-6,
 ) -> pd.DataFrame:
     """Link per-frame defect tables into tracks.
@@ -75,6 +76,12 @@ def track_defects(
     across the field. Set it from the physics: a few times the expected
     per-frame displacement, and well below the typical defect separation.
 
+    ``max_gap`` is the number of missing intermediate frames that a track may
+    survive. The displacement gate grows linearly with elapsed frames, so a
+    link spanning one missing frame is allowed up to
+    ``2 * max_displacement_px``. The default of zero preserves consecutive-only
+    linking.
+
     Returns one row per (track, frame) with ``track_id``, ``frame``, ``x_px``,
     ``y_px`` and ``charge``. Tracks of length 1 are kept - a defect that appears
     and annihilates immediately is data about the nucleation rate, not noise to
@@ -82,6 +89,10 @@ def track_defects(
     """
     if max_displacement_px <= 0:
         raise ValueError("max_displacement_px must be positive")
+    if isinstance(max_gap, bool) or not isinstance(max_gap, (int, np.integer)):
+        raise TypeError("max_gap must be an integer")
+    if max_gap < 0:
+        raise ValueError("max_gap must be non-negative")
     for index, table in enumerate(frames):
         missing = [c for c in REQUIRED_COLUMNS if c not in table.columns]
         if missing:
@@ -89,15 +100,24 @@ def track_defects(
 
     rows: list[dict] = []
     next_track_id = 0
-    # Maps a row index in the previous frame to the track it belongs to.
-    previous_tracks: dict[int, int] = {}
+    # Last observation for every track that may still be linked. Keeping track
+    # state rather than only the preceding frame lets a detection disappear
+    # briefly without forcing a new identity when it returns.
+    active: dict[int, dict[str, float | int]] = {}
 
     for frame_index, table in enumerate(frames):
         table = table.reset_index(drop=True)
         current_tracks: dict[int, int] = {}
 
-        if frame_index > 0 and len(table) and len(frames[frame_index - 1]):
-            previous = frames[frame_index - 1].reset_index(drop=True)
+        active = {
+            track_id: state
+            for track_id, state in active.items()
+            if frame_index - int(state["frame"]) <= max_gap + 1
+        }
+
+        if len(table) and active:
+            active_ids = list(active)
+            previous = pd.DataFrame([active[track_id] for track_id in active_ids])
             for charge in _charge_classes(previous, table, charge_tolerance):
                 previous_rows = _rows_with_charge(previous, charge,
                                                   charge_tolerance)
@@ -105,14 +125,17 @@ def track_defects(
                                                  charge_tolerance)
                 if not len(previous_rows) or not len(current_rows):
                     continue
-                for previous_row, current_row in _assign(
+                elapsed = (
+                    frame_index
+                    - previous.loc[previous_rows, "frame"].to_numpy(dtype=int)
+                )
+                for previous_row, current_row in _assign_with_gates(
                     previous.loc[previous_rows], table.loc[current_rows],
-                    max_displacement_px,
+                    max_displacement_px * elapsed,
                 ):
                     source = previous_rows[previous_row]
                     target = current_rows[current_row]
-                    if source in previous_tracks:
-                        current_tracks[target] = previous_tracks[source]
+                    current_tracks[target] = active_ids[source]
 
         for row_index in range(len(table)):
             if row_index not in current_tracks:
@@ -127,8 +150,12 @@ def track_defects(
                     "charge": float(table.loc[row_index, "charge"]),
                 }
             )
-
-        previous_tracks = current_tracks
+            active[current_tracks[row_index]] = {
+                "x_px": float(table.loc[row_index, "x_px"]),
+                "y_px": float(table.loc[row_index, "y_px"]),
+                "charge": float(table.loc[row_index, "charge"]),
+                "frame": frame_index,
+            }
 
     return pd.DataFrame(
         rows,
@@ -166,6 +193,23 @@ def _assign(previous: pd.DataFrame, current: pd.DataFrame, gate: float):
             yield int(row), int(column)
 
 
+def _assign_with_gates(
+    previous: pd.DataFrame,
+    current: pd.DataFrame,
+    gates: np.ndarray,
+):
+    """Assign with one displacement gate per previous observation."""
+    before = previous[["x_px", "y_px"]].to_numpy(dtype=float)
+    after = current[["x_px", "y_px"]].to_numpy(dtype=float)
+    distance = np.linalg.norm(before[:, None, :] - after[None, :, :], axis=2)
+    allowed = distance <= np.asarray(gates, dtype=float)[:, None]
+    cost = np.where(allowed, distance, 1e9)
+    rows, columns = linear_sum_assignment(cost)
+    for row, column in zip(rows, columns):
+        if allowed[row, column]:
+            yield int(row), int(column)
+
+
 def track_summary(tracks: pd.DataFrame) -> pd.DataFrame:
     """Per-track kinematics, in pixels per frame."""
     if tracks.empty:
@@ -179,7 +223,9 @@ def track_summary(tracks: pd.DataFrame) -> pd.DataFrame:
     for track_id, group in tracks.sort_values("frame").groupby("track_id"):
         x = group["x_px"].to_numpy()
         y = group["y_px"].to_numpy()
+        elapsed = np.diff(group["frame"].to_numpy(dtype=float))
         steps = np.hypot(np.diff(x), np.diff(y))
+        speeds = steps / elapsed
         path = float(steps.sum())
         net = float(np.hypot(x[-1] - x[0], y[-1] - y[0]))
         records.append(
@@ -190,7 +236,7 @@ def track_summary(tracks: pd.DataFrame) -> pd.DataFrame:
                 "first_frame": int(group["frame"].iloc[0]),
                 "last_frame": int(group["frame"].iloc[-1]),
                 "mean_speed_px_per_frame": (
-                    float(steps.mean()) if steps.size else float("nan")
+                    float(speeds.mean()) if speeds.size else float("nan")
                 ),
                 "net_displacement_px": net,
                 # 1 means ballistic, near 0 means the defect wandered without
@@ -212,7 +258,11 @@ def estimate_drift(tracks: pd.DataFrame) -> pd.DataFrame:
     against the ``+1/2`` and ``-1/2`` medians separately before subtracting: if
     they differ, the common component is not pure drift.
     """
+    # A step spanning a detection gap has no unique frame on which to apply
+    # its translation. Use consecutive observations for drift estimation;
+    # gap-normalised steps remain valid for motility below.
     steps = _step_table(tracks)
+    steps = steps[steps["gap"] == 1]
     if steps.empty:
         return pd.DataFrame(columns=["frame", "drift_x_px", "drift_y_px",
                                      "n_steps"])
@@ -259,7 +309,8 @@ def subtract_drift(tracks: pd.DataFrame, drift: pd.DataFrame) -> pd.DataFrame:
 def _step_table(tracks: pd.DataFrame) -> pd.DataFrame:
     if tracks.empty:
         return pd.DataFrame(columns=["track_id", "frame", "charge", "dx_px",
-                                     "dy_px", "speed_px_per_frame"])
+                                     "dy_px", "gap",
+                                     "speed_px_per_frame"])
     ordered = tracks.sort_values(["track_id", "frame"])
     grouped = ordered.groupby("track_id")
     step = pd.DataFrame(
@@ -272,11 +323,10 @@ def _step_table(tracks: pd.DataFrame) -> pd.DataFrame:
             "gap": grouped["frame"].diff(),
         }
     ).dropna(subset=["dx_px"])
-    # Only consecutive frames give a per-frame velocity; this tracker does not
-    # close gaps, but guarding here keeps the function correct if it ever does.
-    step = step[step["gap"] == 1]
+    step["dx_px"] = step["dx_px"] / step["gap"]
+    step["dy_px"] = step["dy_px"] / step["gap"]
     step["speed_px_per_frame"] = np.hypot(step["dx_px"], step["dy_px"])
-    return step.drop(columns=["gap"])
+    return step
 
 
 def motility_by_charge(tracks: pd.DataFrame) -> pd.DataFrame:
