@@ -34,6 +34,7 @@ def summarize_image(
     detect_integer_defects: bool = False,
     global_order_null_stats: dict | None = None,
     min_oriented_nuclei: int = 200,
+    field_type: str = "nuclear",
 ) -> dict:
     height, width = image_shape
     density_cutoff = get_density_threshold(
@@ -108,11 +109,14 @@ def summarize_image(
             field, tissue_mask
         ),
         "global_nematic_order_S_nuclei": compute_global_order(oriented_nuclei),
-        # S is biased upward as ~1/sqrt(N_eff), so it is confounded with nuclei
-        # count and tissue area. Prefer the excess over the null when comparing
-        # groups that differ in either.
+        # Analytically debiased effect size for the nuclear source. The legacy
+        # ``global_order_excess`` column is a compatibility alias with the same
+        # corrected value; it is no longer S/null_mean, which grew as sqrt(N).
         "global_order_null_mean": _null_field(
             global_order_null_stats, "global_order_null_mean"
+        ),
+        "global_order_debiased": _null_field(
+            global_order_null_stats, "global_order_debiased"
         ),
         "global_order_excess": _null_field(
             global_order_null_stats, "global_order_excess"
@@ -120,10 +124,18 @@ def summarize_image(
         "global_order_p": _null_field(
             global_order_null_stats, "global_order_p"
         ),
-        # Below this count the order parameter is dominated by finite-size
-        # noise; flagged rather than dropped so the caller decides.
-        "low_orientation_count": bool(
-            len(oriented_nuclei) < int(min_oriented_nuclei)
+        # This threshold describes the nuclear source only. A collagen field is
+        # sampled per pixel, so a nuclear count cannot declare it low-data.
+        # Keep the old column as a nullable compatibility alias.
+        "low_nuclear_orientation_count": (
+            bool(len(oriented_nuclei) < int(min_oriented_nuclei))
+            if field_type == "nuclear"
+            else None
+        ),
+        "low_orientation_count": (
+            bool(len(oriented_nuclei) < int(min_oriented_nuclei))
+            if field_type == "nuclear"
+            else None
         ),
         "local_S_q25": quantile_or_nan(0.25),
         "local_S_median": quantile_or_nan(0.50),
