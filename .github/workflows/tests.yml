@@ -30,8 +30,6 @@ jobs:
         run: pytest -q
 
   imports:
-    # Build and install the real distribution, then leave the checkout before
-    # importing. An editable install can hide packages omitted from the wheel.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +70,7 @@ jobs:
           lungtwin-ident --help > /dev/null
           lungtwin-ident --visits 4 --treatment-start-months 6 > /dev/null
 
-  lint:
+lint:
   runs-on: ubuntu-latest
   steps:
     - uses: actions/checkout@v4
@@ -95,7 +93,7 @@ jobs:
         python run_flow_maps.py --help > /dev/null
 
     - name: Ruff
-      run: ruff check lung_nematic lungtwin simulations tests *.py
+  run: ruff check lung_nematic lungtwin simulations tests *.py
       
   notebooks:
     # A malformed notebook (collapsed source, invalid schema) is invisible until
