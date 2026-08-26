@@ -8,19 +8,28 @@
 [![Fibrofocus simulation](https://img.shields.io/badge/Colab-Fibrofocus%20simulation-EA4335?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/fibrofocus_colab.ipynb)
 [![3D alveolar prototype](https://img.shields.io/badge/Colab-3D%20alveolar%20prototype-9334E6?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/alveolar3d_colab.ipynb)
 
-Nematic order in fibrotic lung, approached from two directions:
- 
+Nematic order in fibrotic lung, approached from three directions:
+
 - **`lung_nematic/`** measures director fields and candidate topological defects
-  in real H&E histology, with three orientation sources and statistical
+  in real H&E histology and in phase-contrast time lapses of cells on
+  stiffness-controlled gels, with three orientation sources and statistical
   controls.
 - **`simulations/`** builds the tissue from mechanism — alveolar architecture,
   the AT2 → KRT8+ → AT1 epithelial state machine, surfactant-driven collapse,
   breathing, and a confined mesenchyme — and asks when a lesion stops being
   reversible.
+- **`lungtwin/`** asks what a study design can estimate at all, before an
+  estimator exists.
 
-The two are meant to constrain each other: the simulation is analysed with the
+The three are meant to constrain each other. The simulation is analysed with the
 same winding criterion the histology pipeline uses, so defect densities are
-comparable once expressed in the same physical units.
+comparable — but only once expressed at the same physical scale, which is not
+automatic: the packaged configurations detect at 8.0 µm in histology and 28.2 µm
+on a gel, and since density falls roughly as `1/σ²` that mismatch alone is about
+a 12× offset. `crossmap` handles the conversion, and `simulations.stereology`
+handles the further step that a histological section cuts *lines* in three
+dimensions rather than counting points in two.
+
 ---
 ## Workflow
 
@@ -441,6 +450,113 @@ apparent defects that are indistinguishable from randomly oriented cells are
 rejected rather than reported.
 
 ---
+## Part 3 — Time lapse, cross-mapping and study design
+
+Three capabilities that sit between the histology pipeline and the simulations.
+Each carries a constraint that is easy to violate silently, so the constraint is
+stated first.
+
+### Time-lapse defect analysis — `run_timelapse.py`
+
+Per-frame nematic analysis plus defect tracking across frames, parallel over a
+process pool.
+
+```bash
+python run_timelapse.py --frames data_videos --output resultados_timelapse \
+  --n-jobs -1 --sigma-um 15 --microns-per-pixel 0.70423 \
+  --seconds-per-frame 600 --n-scales 4 --min-scales 2 --max-gap 1 \
+  --max-displacement-px 30 --density-quantile 0.10 --render-mp4
+```
+
+**The packaged detection defaults do not transfer from histology.**
+`density_quantile = 0.45` puts the threshold at 0.889 while a confluent
+monolayer spans 0.69–0.91 with a median of 0.905, so it discards nearly half the
+field as low density when coverage is actually 82 %. On real frames the
+packaged configuration returned 0–4 defects where an independent
+plaquette-winding count finds 13. Use `--density-quantile 0.10` on phase
+contrast, and note that *raising* it makes matters worse: at 0.20 detections
+fell to 5.8 per frame and charge balance broke.
+
+**Defect velocity is not the activity readout in every system.** With a defect
+lifetime of 3–4 frames each defect contributes 1–3 displacements, and the
+`+1/2` minus `−1/2` speed contrast is then noise. The primary activity
+observable is `pair_nucleation_rate_mm2_h`; velocity remains as a secondary
+descriptive output.
+
+**Short tracks are not automatically a tracking failure.** `pair_events` decides
+which it is: on the reference cohort 43–49 % of births and deaths had an
+opposite-charge partner within 100 µm against a spatial null of 1–4 %, a 13–35×
+enrichment, so the turnover is physical pair nucleation and annihilation and the
+tracks are short because defects die. Diagnosing this from the tracks themselves
+is circular — the steps measured are the steps the tracker chose to make — which
+is why `detector_stability` looks only at per-frame detections.
+
+**Stage drift must be subtracted, not reasoned around.** Drift adds a common
+velocity *vector*, and speed is a magnitude, so with independent propulsion
+directions it inflates both charge classes *and* compresses the contrast between
+them: 2 px/frame of drift against 3 px/frame of propulsion costs 41 % of the
+contrast.
+
+### Gel-to-histology cross-mapping — `run_crossmap.py`
+
+Re-measures both systems at a matched physical scale and uses the gel series to
+infer an effective stiffness for a histological region.
+
+```bash
+python run_crossmap.py --histology data --gel-frames data_videos \
+  --timelapse-results resultados_timelapse --histology-results resultados \
+  --output resultados_crossmap --n-jobs -1
+```
+
+**Matched scale is not optional.** The packaged configurations detect at 8.0 µm
+in histology (σ = 70 px at 0.1147 µm/px) and 28.2 µm on a gel (σ = 40 px at
+0.7042 µm/px). Defect density falls roughly as `1/σ²`, so that 3.5× mismatch is
+about a 12× offset before any biology enters. Sweeps are therefore specified in
+micrometres and converted per system, and the comparison uses the dimensionless
+`ρ ξ²` rather than raw density.
+
+**The comparison needs a steady state.** A histological lesion has persisted for
+months, so the only thing it can be compared against is a steady-state level,
+not an arbitrary point on a transient. `steady_state_window` gates this, and
+fewer than two steady stiffnesses means no calibration is possible.
+
+**A section is not a monolayer.** In 2D defects are points; in 3D they are
+disclination *lines*, and a section counts line–plane intersections.
+`charge_balance` diagnoses how badly this bites, and `simulations.stereology`
+quantifies it: on the reference 3D model, cutting angle alone changes the
+apparent areal density by 37 %.
+
+### Study design — `lungtwin`
+
+Answers what a design *can* estimate, before any estimator is written.
+
+```bash
+lungtwin-ident --visits 8 --treatment-start-months 6 --fix-beta \
+               --target-se-ri 1.0 --monte-carlo 400
+```
+
+A fit along a locally flat direction does not fail: it returns whatever point
+the initialisation drifted to. This computes the local sensitivity rank at a
+nominal parameter point and the Cramér–Rao bounds that follow. Note the claim is
+local — full rank at a point establishes local identifiability, not global
+structural identifiability — and the API is named accordingly
+(`is_locally_identifiable`). Pass `n_probes` to re-check the rank at perturbed
+points.
+
+### Figures and animations
+
+```bash
+python make_figures.py --histology resultados --timelapse resultados_timelapse \
+  --output figuras
+python make_simulation_gifs.py --output gifs
+```
+
+Individual figures rather than composite panels, each as 600 dpi PNG for slides
+and vector PDF for a manuscript. Histology panels aggregate to one point per
+patient: images within a patient have an ICC of 0.14–0.29, so image-level points
+would imply far more evidence than the number of patients provides.
+
+---
 ### Repository layout
 
 ```text
@@ -464,10 +580,23 @@ lung_nematic/            analysis of real histology
 ├── defect_classifier.py grouped validation, training and model persistence
 ├── labeling.py          interactive real/uncertain/artefact labelling widget
 ├── phase_contrast.py    director fields and stiffness-series analysis for gels
+├── video.py             read time-lapse videos; container fps is NOT acquisition
+├── tracking.py          link defects across frames; pair-event diagnostics
+├── flow.py              collective texture flow and its alignment with the field
+├── focus.py             architecture inside one segmented focus (charge, anchoring)
+├── crossmap.py          matched-scale gel-to-histology comparison and inversion
+├── lic.py               line integral convolution of a director field
 ├── metrics.py           per-image summary metrics
 ├── visualization.py     overlays and diagnostic panels
 ├── pipeline.py          single-image engine (analyze_image)
 └── batch.py             folder-level batch driver
+
+lungtwin/                what a study design can and cannot estimate
+├── model.py             reparameterized two-state IPF progression model
+├── design.py            visit schedules; measurement noise is pinned, not fitted
+├── identifiability.py   local sensitivity rank, Cramer-Rao bounds, profiles
+├── report.py            plain-text report
+└── cli.py               lungtwin-ident console script
 
 simulations/             mechanism-based models
 ├── alveolar/            architecture, epithelium, breathing, mesenchyme, tracking
@@ -487,10 +616,18 @@ simulations/             mechanism-based models
 │   ├── bistability.py   reduced equation and the point of no return
 │   ├── render.py        frames, GIF and MP4
 │   └── cli.py           run / critical / scan subcommands
+├── focus3d.py           3D active-nematic focus; genuine isotropic-nematic crossover
+├── stereology.py        what a 2D section counts of a 3D disclination network
 ├── coupled_analysis.py  joint bistability of both loops
 ├── pharmacology.py      retrospective drug controls vs the clinical record
 ├── nematic_resolution.py  adaptive window + per-window counting-noise null
 └── configs/             parameter sets that reproduce specific runs
+
+run_timelapse.py            per-frame analysis + defect tracking, parallel
+run_crossmap.py             gel-to-histology cross-mapping, parallel
+run_flow_maps.py            collective flow maps
+make_figures.py             individual Nature-style figures (PNG 600 dpi + PDF)
+make_simulation_gifs.py     annotated GIFs of the 2D and 3D models for talks
 
 lung_nematic_colab.ipynb    histology analysis front-end
 defect_labelling_colab.ipynb interactive labelling and classifier training
@@ -575,6 +712,21 @@ depletion.
   A separate genuinely three-dimensional prototype lives in
   [`simulations/alveolar3d/`](simulations/alveolar3d/README.md) — small (seven
   units) and not a replacement for the calibrated 2D model.
+- **`alveolar3d` does not reach a nematic phase and must not be used to measure
+  orientational order.** With seven alveoli its fibroblasts sit at ~1 % packing:
+  a dilute rod gas. Reduced to one alveolus they collapse into a blob 33–108 µm
+  across against a 38 µm alignment radius, so every cell interacts with every
+  other and the order parameter pins at 0.956 whatever the density — order that
+  does not move when density changes tenfold is a finite-size artefact, not a
+  phase. Raising steric repulsion 28-fold did not open the window. The model is
+  built for alveolar mechanics and epithelial fate, not for dense nematics; use
+  [`simulations/focus3d.py`](simulations/focus3d.py), which shows a genuine
+  isotropic–nematic crossover between packing 0.12 and 0.24.
+- `focus3d`'s **defaults order into a single domain** (`S ≈ 0.73`), which
+  contains no defects. Topological defects live in the multi-domain regime — the
+  one the gel data occupies — so stereology and animation both pass explicit
+  parameters (`align_rate_per_h=3.0`, `rot_diffusion_per_h=0.8`,
+  `size_um=400`).
 - Alveolar collapse rescales a radius rather than relaxing septal mechanics, so
   the geometry of a collapsed alveolus is schematic.
 - Breathing is quasi-static: the tidal strain *amplitude* is modelled and the
