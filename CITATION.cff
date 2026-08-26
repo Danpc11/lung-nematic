@@ -19,6 +19,12 @@ authors:
   - given-names: Hugo
     family-names: Tovar-Romero
     affiliation: "Instituto Nacional de Medicina Genómica (INMEGEN)"
+  - given-names: Moisés
+    family-names: Selman
+    affiliation: "Instituto Nacional de Enfermedades Respiratorias Ismael Cosío Villegas (INER)"
+  - given-names: Miguel
+    family-names: Gaxiola
+    affiliation: "Instituto Nacional de Enfermedades Respiratorias Ismael Cosío Villegas (INER)"
 repository-code: "https://github.com/Danpc11/lung-nematic"
 url: "https://github.com/Danpc11/lung-nematic/releases/tag/v0.1.0"
 license: MIT
