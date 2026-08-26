@@ -626,8 +626,6 @@ simulations/             mechanism-based models
 run_timelapse.py            per-frame analysis + defect tracking, parallel
 run_crossmap.py             gel-to-histology cross-mapping, parallel
 run_flow_maps.py            collective flow maps
-make_figures.py             individual Nature-style figures (PNG 600 dpi + PDF)
-make_simulation_gifs.py     annotated GIFs of the 2D and 3D models for talks
 
 lung_nematic_colab.ipynb    histology analysis front-end
 defect_labelling_colab.ipynb interactive labelling and classifier training
