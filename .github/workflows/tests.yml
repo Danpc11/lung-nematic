@@ -70,54 +70,60 @@ jobs:
           lungtwin-ident --help > /dev/null
           lungtwin-ident --visits 4 --treatment-start-months 6 > /dev/null
 
-lint:
-  runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v4
-
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-        cache: pip
-
-    - name: Install package and lint dependencies
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install -e .
-        python -m pip install ruff==0.16.0
-
-    - name: Root scripts respond to --help
-      run: |
-        python run_timelapse.py --help > /dev/null
-        python run_crossmap.py --help > /dev/null
-        python run_flow_maps.py --help > /dev/null
-
-    - name: Ruff
-  run: ruff check lung_nematic lungtwin simulations tests *.py
-      
-  notebooks:
-    # A malformed notebook (collapsed source, invalid schema) is invisible until
-    # someone opens it in Colab. nbformat.validate catches it in CI.
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install nbformat
+
+      - name: Install package and lint dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install ruff==0.16.0
+
+      - name: Root scripts respond to --help
+        run: |
+          python run_timelapse.py --help > /dev/null
+          python run_crossmap.py --help > /dev/null
+          python run_flow_maps.py --help > /dev/null
+
+      - name: Ruff
+        run: ruff check lung_nematic lungtwin simulations tests *.py
+
+  notebooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install notebook validation dependency
+        run: python -m pip install nbformat
+
       - name: Validate notebooks
         run: |
           python - <<'PY'
-          import glob, sys
+          import glob
+          import sys
           import nbformat
+
           failed = False
           for path in glob.glob("*.ipynb"):
               try:
-                  nbformat.validate(nbformat.read(path, as_version=4))
+                  notebook = nbformat.read(path, as_version=4)
+                  nbformat.validate(notebook)
                   print(f"ok   {path}")
               except Exception as error:
                   print(f"FAIL {path}: {error}")
                   failed = True
+
           sys.exit(1 if failed else 0)
           PY
