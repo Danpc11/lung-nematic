@@ -219,7 +219,10 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Keep raw coordinates. Drift adds a common velocity "
                             "VECTOR, so with independent propulsion directions "
                             "it inflates both charge classes and compresses the "
-                            "contrast between them - measured at 41% loss. "
+                            # Escaped: argparse runs help strings through
+                            # %-formatting, and a bare % raises TypeError on
+                            # --help. Caught only because CI now runs it.
+                            "contrast between them - measured at 41%% loss. "
                             "Leave correction on unless the frames are already "
                             "registered.")
     render = parser.add_argument_group("rendering")
