@@ -4,9 +4,64 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-26
 
 ### Added
+
+- **`simulations.focus3d`**: a three-dimensional active-nematic focus model.
+  It exists because the stereology below needs a volume that is genuinely in
+  the nematic phase, and `simulations.alveolar3d` cannot supply one: measured
+  across configurations it either sits at 1% packing with seven alveoli - a
+  dilute rod gas with no orientational order - or, with one alveolus, collapses
+  into a blob 33-108 um across against a 38 um alignment radius, pinning the
+  order parameter at 0.956 regardless of density. An order parameter that does
+  not move when density changes tenfold is a finite-size artefact, not a phase.
+  `focus3d` shows a genuine isotropic-nematic crossover between packing 0.12
+  and 0.24, and `tests/test_focus3d.py` asserts that response rather than any
+  single value.
+  Three things had to change from the 2D model and each is commented at the
+  point it matters: alignment is computed from the Q tensor over node-contact
+  pairs (centre-to-centre neighbourhoods are isotropic and made order *fall*
+  with density, 0.067 to 0.017); the alignment-to-noise ratio inherited from 2D
+  sits below the 3D ordering threshold, since rotational diffusion acts on two
+  angular degrees of freedom instead of one; and growth is capped by volume
+  fraction rather than cell count, because a fixed cap means different physics
+  in different domain sizes.
+
+- **`simulations.stereology`**: relates defects counted on a 2D section to the
+  3D structure they cut. On a slide, defects are line-plane intersections, not
+  points, so a section's areal density and a monolayer's are different
+  quantities. `N_A = L_V / 2` holds only for isotropically oriented lines, and
+  the module measures whether that holds rather than assuming it: on a volume
+  of disclinations parallel to z the apparent density runs from tens per mm^2
+  to exactly zero depending on the cutting angle alone. On the `focus3d`
+  multi-domain regime the anisotropy ratio is 1.37 - sectioning angle changes a
+  histological count by 37% - and the per-section charge imbalance is 0.074,
+  which turns `crossmap.charge_balance` from a caveat into a threshold.
+  The density gate is deliberately absolute rather than a quantile: a 0.4
+  quantile on a uniformly filled volume discarded 58% of the plane and every
+  defect with it, reporting zero where four were present.
+
+- `make_figures.py`: individual Nature-style figures, one per idea, as 600 dpi
+  PNG for slides and vector PDF for a manuscript. The headline order figure
+  plots `global_order_excess` rather than raw `S`, since UIP patients carry a
+  median of 2883 oriented nuclei against 6632 for NSIP and `S` is biased upward
+  as roughly `1/sqrt(N)`; a companion figure shows that confound instead of
+  hiding it. Histology panels aggregate to one point per patient, because the
+  within-patient ICC of 0.14-0.29 means 148 image-level points would imply far
+  more evidence than 13 patients provide.
+
+- `make_simulation_gifs.py`: annotated GIFs of the 2D and 3D models for talks,
+  with per-frame order and defect counts. The 3D panel shows a slab rather than
+  the full cube - a projection through 400 um of 2800 rods is opaque and hides
+  exactly the defects it should show - and fades rods by their out-of-plane
+  tilt, since a rod nearly normal to the cut projects to a segment whose
+  apparent orientation is mostly noise.
+
+- CI now imports the new simulation modules and runs `--help` on every root
+  script; Ruff covers the repository root as well.
+
+### Added (earlier in this cycle)
 
 - Opposite-charge birth/death pairing diagnostics with a spatial null model.
   Pair enrichment distinguishes physical nucleation and annihilation from
