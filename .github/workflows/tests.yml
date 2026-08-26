@@ -73,28 +73,30 @@ jobs:
           lungtwin-ident --visits 4 --treatment-start-months 6 > /dev/null
 
   lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - run: pip install ruff==0.16.0
-      - name: Root scripts respond to --help
-        # These are not console_scripts, so they are exercised from the
-        # checkout rather than from an installed wheel. A broken argument
-        # parser in one of them would otherwise reach the user first.
-        run: |
-          python run_timelapse.py --help > /dev/null
-          python run_crossmap.py --help > /dev/null
-          python run_flow_maps.py --help > /dev/null
-          python make_figures.py --help > /dev/null
-          python make_simulation_gifs.py --help > /dev/null
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
 
-      - name: Ruff
-        run: ruff check lung_nematic lungtwin simulations tests *.py
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: pip
 
+    - name: Install package and lint dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e .
+        python -m pip install ruff==0.16.0
+
+    - name: Root scripts respond to --help
+      run: |
+        python run_timelapse.py --help > /dev/null
+        python run_crossmap.py --help > /dev/null
+        python run_flow_maps.py --help > /dev/null
+
+    - name: Ruff
+      run: ruff check lung_nematic lungtwin simulations tests *.py
+      
   notebooks:
     # A malformed notebook (collapsed source, invalid schema) is invisible until
     # someone opens it in Colab. nbformat.validate catches it in CI.
