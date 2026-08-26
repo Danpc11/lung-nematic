@@ -18,14 +18,16 @@ conda-env/
 htmlcov/
 .ruff_cache/
 .mypy_cache/
+lung_nematic.egg-info/
 
 # Jupyter
 .ipynb_checkpoints/
 
 # Results and data
-data/
+data*/
 images/
-results/
+results*/
+resultados*/
 output/
 outputs/
 *.log
@@ -39,6 +41,7 @@ outputs/
 *.lif
 *.ome.tif
 *.ome.tiff
+*.jpg
 
 # OS/editor
 .DS_Store
