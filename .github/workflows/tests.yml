@@ -53,6 +53,8 @@ jobs:
           python -c "import simulations.alveolar3d"
           python -c "import simulations.fibrofocus"
           python -c "import simulations.coupled_analysis"
+          python -c "import simulations.stereology"
+          python -c "import simulations.focus3d"
           # lungtwin was previously a nested project whose modules never
           # reached the root wheel, while `lungtwin/` at the repo root
           # resolved as an empty namespace package. Both failures were
@@ -79,8 +81,19 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install ruff==0.16.0
+      - name: Root scripts respond to --help
+        # These are not console_scripts, so they are exercised from the
+        # checkout rather than from an installed wheel. A broken argument
+        # parser in one of them would otherwise reach the user first.
+        run: |
+          python run_timelapse.py --help > /dev/null
+          python run_crossmap.py --help > /dev/null
+          python run_flow_maps.py --help > /dev/null
+          python make_figures.py --help > /dev/null
+          python make_simulation_gifs.py --help > /dev/null
+
       - name: Ruff
-        run: ruff check lung_nematic lungtwin simulations tests
+        run: ruff check lung_nematic lungtwin simulations tests *.py
 
   notebooks:
     # A malformed notebook (collapsed source, invalid schema) is invisible until
