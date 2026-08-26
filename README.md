@@ -9,7 +9,7 @@
 [![3D alveolar prototype](https://img.shields.io/badge/Colab-3D%20alveolar%20prototype-9334E6?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Danpc11/lung-nematic/blob/main/alveolar3d_colab.ipynb)
 
 Nematic order in fibrotic lung, approached from two directions:
-
+ 
 - **`lung_nematic/`** measures director fields and candidate topological defects
   in real H&E histology, with three orientation sources and statistical
   controls.
