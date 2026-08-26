@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
 - Direct MP4 input with metadata provenance, encoded-order tests, and a warning
   for excess director-field mass near compression-prone image axes. Container
   FPS is never used as the acquisition interval; original TIFFs remain preferred.
+- `run_flow_maps.py` and `lung_nematic.flow` generate LIC, calibrated collective
+  texture-flow maps, vector overlays, and flow--director alignment for selected
+  stiffnesses. The output deliberately says collective flow rather than
+  single-cell velocity because unlabeled phase contrast does not identify cells.
 
 - `global_order_null` and `expected_order_under_randomness` in `nematic`:
   a permutation floor for the global order parameter. `S` is biased upward as
