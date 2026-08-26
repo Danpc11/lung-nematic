@@ -30,6 +30,12 @@ results*/
 resultados*/
 output/
 outputs/
+uploads/
+patient_data/
+*.dcm
+*.xlsx
+*.csv
+.env*
 *.log
 
 # Large microscopy files
